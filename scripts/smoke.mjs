@@ -1,5 +1,6 @@
 // End-to-end smoke test: starts the dev server, opens the game in headless
-// Chromium and plays through menu -> lobby -> a whole match -> practice range.
+// Chromium and plays through menu -> lobby -> a whole match -> bot-only
+// rounds on every map -> practice range.
 // Run with `npm run smoke`. Needs Playwright with Chromium (installed globally
 // in Claude's cloud sessions; elsewhere run `npm i -g playwright` first).
 import { execSync } from 'node:child_process';
@@ -101,6 +102,44 @@ try {
   await page.click('.lobby [data-a="leave"]');
   check('Back returns to the main menu', await page.evaluate(() => window.__cf.app.state === 'menu' && !window.__cf.app.session));
 
+  // Bots on their own: spectate a 2v2 on each map until a team is wiped out.
+  for (const map of ['dunes', 'frostbite', 'arena']) {
+    await page.click('text=Play vs bots');
+    await page.evaluate(() => window.T.fast(0.2));
+    await page.click(`.lobby [data-set="map=${map}"]`);
+    await page.evaluate(() => window.T.fast(0.2));
+    await page.click('.lobby [data-join="-1"]');
+    await page.evaluate(() => window.T.fast(0.2));
+    await page.click('text=Start match');
+    await page.waitForFunction(() => window.__cf.app.state === 'match', null, { timeout: 5000 });
+    const r = await page.evaluate(async () => {
+      const h = window.T.host();
+      let shots = 0;
+      const fire = h.botFire.bind(h);
+      h.botFire = (...args) => { shots++; fire(...args); };
+      // How far each bot gets from where it stood when the round went live.
+      const start = new Map(), far = new Map();
+      const reasons = [];
+      // Up to two rounds; one of them must end with a team wiped out.
+      for (let i = 0; i < 1000 && reasons.length < 2 && h.inMatch; i++) {
+        const before = h.phase;
+        await window.T.fast(0.25);
+        if (h.phase === 'live') for (const p of h.players.values()) {
+          if (!p.bot) continue;
+          if (before !== 'live' || !start.has(p.id)) start.set(p.id, [...p.p]);
+          const s0 = start.get(p.id);
+          far.set(p.id, Math.max(far.get(p.id) ?? 0, Math.hypot(p.p[0] - s0[0], p.p[2] - s0[2])));
+        }
+        if (before !== 'roundEnd' && h.phase === 'roundEnd') reasons.push(h.reason);
+        if (reasons.some((x) => x.includes('eliminated'))) break;
+      }
+      const moved = [...far.values()].filter((d) => d > 5).length;
+      return { reasons, shots, moved, bots: h.bots.size };
+    });
+    check(`bots fight and finish a round on ${map}`, r.bots === 4 && r.moved >= 2 && r.shots > 0 && r.reasons.some((x) => x.includes('eliminated')), JSON.stringify(r));
+    await page.evaluate(() => window.__cf.app.leave());
+  }
+
   // Practice range: free buying, armour shows up in the inventory
   await page.evaluate(() => window.__cf.app.practice('arena'));
   await page.waitForFunction(() => window.__cf.app.state === 'match' && window.T.host().players.size === 4, null, { timeout: 5000 });
@@ -108,6 +147,14 @@ try {
   await page.evaluate(() => { const c = window.__cf.app.session.client; c.send({ t: 'buy', item: 'rifle' }); c.send({ t: 'buy', item: 'kevlar' }); return window.T.fast(0.3); });
   const inv = await page.evaluate(() => window.__cf.app.session.client.arsenal.inv);
   check('practice range buys are free and armour is sent', inv.primary === 'rifle' && inv.armor === 100, JSON.stringify(inv));
+  const practice = await page.evaluate(async () => {
+    const h = window.T.host();
+    const start = new Map([...h.players.values()].map((p) => [p.id, [...p.p]]));
+    await window.T.fast(8);
+    const moved = [...h.players.values()].filter((p) => p.bot && Math.hypot(p.p[0] - start.get(p.id)[0], p.p[2] - start.get(p.id)[2]) > 1).length;
+    return { moved, hp: window.T.me().hp };
+  });
+  check('practice bots walk around and hold fire', practice.moved >= 1 && practice.hp === 100, JSON.stringify(practice));
   await page.evaluate(() => window.__cf.app.leave());
   check('leaving practice returns to the menu', await page.evaluate(() => window.__cf.app.state === 'menu'));
 } catch (e) {

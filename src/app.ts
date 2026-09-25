@@ -4,7 +4,8 @@ import { GameClient } from './client/client';
 import { loadPrefs, savePrefs, type Prefs } from './client/prefs';
 import { Renderer } from './engine/renderer';
 import { Input } from './game/input';
-import { HostSession, type BotFactory } from './host/host';
+import { createBot } from './bots/bot';
+import { HostSession } from './host/host';
 import { Ticker } from './host/ticker';
 import { MAPS } from './maps';
 import { localPair } from './net/link';
@@ -24,13 +25,6 @@ interface Session {
   practice: boolean;
   code: string;
 }
-
-/** Placeholder until real bots exist: stand at spawn and look around. */
-export let makeBot: BotFactory = (_h, p) => {
-  let t = Math.random() * 6;
-  return { update(dt) { t += dt; p.yaw += Math.sin(t) * dt * 0.6; } };
-};
-export const setBotFactory = (f: BotFactory) => { makeBot = f; };
 
 /**
  * The whole game: menus, lobby and the match, and the switching between them.
@@ -233,7 +227,7 @@ export class App {
   private startHost(settings: Partial<RoomSettings>, practice: boolean, code: string): HostSession {
     const host = new HostSession(code, settings);
     host.sandbox = practice;
-    host.botFactory = (h, p) => makeBot(h, p);
+    host.botFactory = createBot;
     return host;
   }
 

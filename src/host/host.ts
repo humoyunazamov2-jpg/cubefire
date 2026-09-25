@@ -16,6 +16,8 @@ import { HostPlayer } from './hostPlayer';
 export interface BotBrain {
   update(dt: number): void;
   onRoundStart?(): void;
+  /** The host changed this bot's inventory (bought, picked up, new round). */
+  onInventory?(give?: { w: WeaponId; ammo: [number, number] }, reset?: boolean): void;
   onDamaged?(from: V3, attacker: number): void;
   onSound?(p: V3, loud: boolean, from: number): void;
 }
@@ -577,7 +579,8 @@ export class HostSession {
   }
 
   private sendInv(p: HostPlayer, give?: { w: WeaponId; ammo: [number, number] }, reset = false): void {
-    this.send(p.id, { t: 'inv', inv: invOf(p), money: p.money, give, reset });
+    if (p.bot) this.bots.get(p.id)?.onInventory?.(give, reset);
+    else this.send(p.id, { t: 'inv', inv: invOf(p), money: p.money, give, reset });
   }
 
   // ------------------------------------------------------------- match flow
