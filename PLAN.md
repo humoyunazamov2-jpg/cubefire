@@ -23,7 +23,7 @@ work. Read it top to bottom before changing anything.
 | 2 | Player movement and physics | **Done** |
 | 3 | Weapons and combat | **Done** |
 | 4 | Maps | **Done** |
-| 5 | CS2 match rules and game UI | **Next** |
+| 5 | CS2 match rules and game UI | **In progress** — code written and typechecks, **never run in a browser yet** (see "Where Part 5 stopped") |
 | 6 | Bots | Not started |
 | 7 | Friends multiplayer (rooms over the internet) | Not started |
 | 8 | Polish and release | Not started |
@@ -63,19 +63,24 @@ Git history has one commit per finished part (`git log --oneline`).
   `C:\Program Files\Git\cmd\git.exe` and `C:\Program Files\GitHub CLI\gh.exe`,
   or prepend `C:\Program Files\Git\cmd;C:\Program Files\GitHub CLI` to PATH.
   gh is logged in as `humoyunazamov2-jpg` (keyring, scopes repo/workflow).
-- Dev URL: `http://127.0.0.1:5174/` — add `?map=dunes|frostbite|arena`.
-  Right now `src/main.ts` is a **practice-range harness**: offline host in
-  sandbox mode (free money, instant respawn) with three strafing dummy bots.
-  Part 5 replaces it with the real menu → match flow.
+- Dev URL: `http://127.0.0.1:5174/`. `src/main.ts` now boots the real `App`
+  (main menu → lobby → match). The old `?map=` practice harness is gone; the
+  menu's "Practice range" button replaces it (`app.practice(mapId)`).
 
 ### Testing in Claude's browser pane
 
 The pane's tab is usually hidden, so `requestAnimationFrame` is paused.
-`main.ts` exposes `window.__cf = { renderer, input, host, client, run }`:
-- `await __cf.run(seconds)` steps the game manually at 60 fps.
-- `__cf.client.testMode = true` lets the client take input without pointer lock.
+`main.ts` exposes `window.__cf = { app, run }`:
+- `await __cf.run(seconds)` steps the whole app (host + client + render) at 60 fps.
+- Set `__cf.app.manualTick = true` **before** starting a session, so the host is
+  stepped by `run()` instead of the background Web Worker ticker (otherwise
+  the host advances in real time on its own and tests aren't repeatable).
+- Then e.g. `__cf.app.playVsBots()` or `__cf.app.practice('arena')`.
+- `__cf.app.session.client` is the `GameClient`; `.host` is the `HostSession`.
+  Set `client.testMode = true` so the client takes input without pointer lock.
 - Keys: `dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW' }))`.
-- Mouse buttons: `__cf.input.held.add('Mouse0'); __cf.input.pressedNow.add('Mouse0')`.
+- Mouse buttons: `app.input.held.add('Mouse0'); app.input.pressedNow.add('Mouse0')`
+  (TS-private fields, reachable from page JS).
 - Screenshots work after `run()` has rendered a frame.
 
 ## Architecture
@@ -125,9 +130,12 @@ Authority split (friends-only, so trust is fine):
 | `src/client/prefs.ts` | Player settings in localStorage |
 | `src/render/*` | Player models + skins, first-person view model, voxel gun models, effects (tracers, particles, bullet holes, smoke, explosions) |
 | `src/audio/sfx.ts` | Procedural WebAudio sounds (gunshots, footsteps per surface, explosions…) |
-| `src/ui/*` | HUD, buy menu, scoreboard (DOM overlays) |
-| `src/maps/*` | `builder.ts` toolkit; maps `dunes`, `frostbite`, `arena`; `testMap` (engine test scene, not in the map list) |
-| `src/main.ts` | Temporary practice-range harness (replace in Part 5) |
+| `src/ui/hud.ts`, `buyMenu.ts`, `scoreboard.ts` | HUD, buy menu, scoreboard (DOM overlays) |
+| `src/ui/menus.ts`, `menus.css` | Main menu, settings, how-to-play, pause menu, lobby, click-to-play prompt, loading and notice screens |
+| `src/app.ts` | `App`: owns renderer/input/UI, switches menu ↔ lobby ↔ match, starts sessions (`playVsBots`, `practice`), pointer-lock/pause handling, menu backdrop, auto graphics quality. `makeBot` placeholder bot factory lives here until Part 6 |
+| `src/host/ticker.ts` | Web Worker-driven 60 Hz tick so the host keeps simulating in a background tab |
+| `src/maps/*` | `builder.ts` toolkit; maps `dunes`, `frostbite`, `arena`; `testMap.ts` is the old engine test scene and is no longer used (safe to delete) |
+| `src/main.ts` | Boots `App`, runs the frame loop, exposes the `__cf` test hook |
 
 ### Gameplay numbers worth knowing
 
@@ -139,16 +147,40 @@ Authority split (friends-only, so trust is fine):
 
 ## What each remaining part must do
 
-### Part 5 — CS2 match rules and game UI (NEXT)
+### Part 5 — CS2 match rules and game UI (IN PROGRESS)
 The host round state machine already exists in `host.ts` (warmup → freeze →
-live → roundEnd → halftime → matchEnd, economy, MVP, buy zones). Part 5 is
-about making it a playable game:
-- Replace the `main.ts` harness with an app shell: main menu (name, "Play vs
-  bots", "Host room", "Join room", Settings, How to play), then the match.
-- Pause/Esc menu (resume, settings, change team, leave match).
-- Match end screen with scoreboard, then back to menu/lobby.
-- Test a full offline match end to end (freeze, buy, rounds, halftime swap,
-  match end), fix whatever breaks, tune timings.
+live → roundEnd → halftime → matchEnd, economy, MVP, buy zones).
+
+#### Where Part 5 stopped (owner asked to stop here)
+Written, typechecks (`npx tsc --noEmit` exit 0), committed — but **not yet run
+in a browser even once**. Expect small bugs on first run.
+- Done: `src/app.ts` app shell; `src/ui/menus.ts` + `menus.css` (main menu with
+  name box, Play vs bots, Practice range, Settings, How to play; lobby with
+  team lists, add/remove bots, mode 1v1/2v2/4v4, map cards, rounds to win,
+  fill bots, bot skill, friendly fire, start button, lobby chat; pause menu;
+  settings screen saved to localStorage; loading/notice screens);
+  `src/host/ticker.ts` background ticker (used for every hosted session);
+  `GameClient` got `onLoading` / `onChat` hooks and loads the map one tick
+  after `start` so the loading screen can paint; `main.ts` now boots `App`.
+- The main menu's online buttons are hidden (`new App(root)` → `online=false`);
+  `hostOnline()` / `joinOnline()` just show "Coming soon" (Part 7).
+- Bots use the idle placeholder `makeBot` in `app.ts` (they stand and look
+  around) until Part 6.
+
+#### Next steps for Part 5, in order
+1. Start the dev server, open the page, check the console for errors, and
+   screenshot the main menu (the backdrop is Dunes with an orbiting camera).
+2. Play vs bots → lobby renders → Start match → loading screen → "Click to play"
+   prompt → HUD. With `manualTick`, confirm freeze → live → kill all bots via
+   `host.applyDamage` or shooting → roundEnd → money paid → next round.
+3. Run a whole match (e.g. winRounds 3): halftime swaps spawns and resets money
+   to $800, matchEnd shows the scoreboard, then the host sends `end` and the
+   app returns to the lobby. Then Leave → main menu → backdrop comes back.
+4. Pointer lock: Esc → pause menu; Resume re-locks; B opens the buy menu
+   without triggering the pause menu; chat (Y) keeps the lock.
+5. Settings apply live (FOV, sensitivity, volume, crosshair, graphics).
+6. Practice range from the menu still works (sandbox, free buys, respawn).
+7. Update this file, commit, push.
 - Known rough edge: the first-person tracer start point uses the view-model
   camera (different FOV), so tracers start slightly off. Cosmetic.
 
@@ -169,8 +201,11 @@ with `host.botThrow`; react to `onDamaged` / `onSound`.
   start button for the host, chat. The host messages for all of this exist.
 - **Background-tab problem:** browsers pause `requestAnimationFrame` and
   throttle timers in hidden tabs, which would freeze the match if the host
-  alt-tabs. Drive `host.update()` from a Web Worker timer that posts ticks to
-  the main thread.
+  alt-tabs. Already handled by `src/host/ticker.ts` (Web Worker timer); just
+  verify it keeps ticking with real remote players connected.
+- Wire `App.hostOnline()` / `App.joinOnline(code)` and construct `App` with
+  `online = true`. The lobby already has "Copy invite" (URL with `?join=CODE`);
+  read `?join=` on startup and call `MainMenu.prefillCode`.
 - Handle disconnects, rejoin, version mismatch (`PROTOCOL_VERSION`).
 
 ### Part 8 — Polish and release

@@ -87,6 +87,8 @@ export class GameClient {
   onStart: (() => void) | null = null;
   onEnd: (() => void) | null = null;
   onKick: ((reason: string) => void) | null = null;
+  onLoading: ((mapName: string) => void) | null = null;
+  onChat: ((name: string | null, text: string) => void) | null = null;
   onClosed: (() => void) | null = null;
   /** Pointer lock must be released for menus; the app decides. */
   onWantCursor: ((free: boolean) => void) | null = null;
@@ -165,9 +167,14 @@ export class GameClient {
         this.onRoom?.(m.room);
         break;
       case 'start':
-        this.loadMap(m.map);
-        this.onStart?.();
-        this.send({ t: 'loaded' });
+        // Building the map blocks for a moment; let the loading screen paint first.
+        this.onLoading?.(MAPS[m.map].name);
+        setTimeout(() => {
+          if (!this.link.open) return;
+          this.loadMap(m.map);
+          this.onStart?.();
+          this.send({ t: 'loaded' });
+        }, 40);
         break;
       case 'end':
         this.unloadMap();
@@ -224,10 +231,12 @@ export class GameClient {
         break;
       case 'chat':
         this.ui.hud.chatLine(m.name, this.teamOf(m.from), m.text, m.team);
+        this.onChat?.(m.name, m.text);
         sfx.ui('chat');
         break;
       case 'note':
         this.ui.hud.chatLine(null, -1, m.text);
+        this.onChat?.(null, m.text);
         break;
       case 'pong':
         this.ping = Math.round(performance.now() - m.ts);
