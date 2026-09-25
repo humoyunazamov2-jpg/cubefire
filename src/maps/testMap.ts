@@ -24,9 +24,8 @@ export function buildTestMap(): { world: VoxelWorld; env: Environment } {
   // Stairs made of slabs and full blocks.
   for (let i = 0; i < 6; i++) {
     const x = 36 + i;
-    if (i % 2 === 0) w.set(x, 5 + (i >> 1), 20, B.sandstoneSlab);
-    else w.set(x, 5 + (i >> 1), 20, B.sandstone);
-    w.fill(x, 5, 20, x, 4 + (i >> 1), 20, B.sandstone);
+    if (i >= 2) w.fill(x, 5, 20, x, 4 + (i >> 1), 20, B.sandstone);
+    w.set(x, 5 + (i >> 1), 20, i % 2 === 0 ? B.sandstoneSlab : B.sandstone);
   }
 
   // Crates for cover.
