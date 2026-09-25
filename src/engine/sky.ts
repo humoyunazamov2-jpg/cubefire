@@ -100,4 +100,14 @@ export class Sky {
   }
 
   private cloudDrift = 0;
+
+  /** Free the GPU copies of the dome, cloud plane and cloud texture. */
+  dispose(): void {
+    this.cloudTex.dispose();
+    for (const o of this.group.children) {
+      const m = o as THREE.Mesh;
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    }
+  }
 }

@@ -965,6 +965,7 @@ export class GameClient {
   dispose(): void {
     this.unloadMap();
     this.link.close();
-    this.renderer.viewCamera.remove(this.view.root);
+    this.effects.dispose();
+    this.view.dispose();
   }
 }

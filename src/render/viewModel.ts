@@ -66,6 +66,18 @@ export class ViewModel {
     this.gunPivot.add(this.flash);
   }
 
+  /** Detach from the camera and free this view model's own geometry and materials. */
+  dispose(): void {
+    this.root.parent?.remove(this.root);
+    this.gunPivot.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      m.geometry.dispose();
+      // The gun shares the voxel material with dropped weapons; keep that one.
+      if (m.material !== voxMaterial) (m.material as THREE.Material).dispose();
+    });
+  }
+
   setTeam(team: number): void {
     this.sleeveMat.color.set(TEAM_COLORS[team === 1 ? 1 : 0].main);
   }

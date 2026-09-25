@@ -100,11 +100,19 @@ export class App {
     this.notice = new Notice(root);
 
     document.addEventListener('pointerlockchange', () => this.onLockChange());
+    // Closing the tab during an online game drops you (or, for the host, everyone).
+    addEventListener('beforeunload', (e) => {
+      const s = this.session;
+      if (!s || s.offline) return;
+      e.preventDefault();
+      e.returnValue = '';
+    });
     document.addEventListener('pointerlockerror', () => { if (this.state === 'match' && !this.pause.visible) this.prompt.show(); });
     addEventListener('keydown', (e) => {
       if (e.code === 'Escape' && this.settings.visible) this.settings.close();
     });
     this.applyPrefs();
+    if (this.prefs.quality === 'auto') this.setScale(this.renderer.suggestedScale());
     this.showMenu();
     // Invite links look like ...?join=CODE: fill in the code for them.
     const join = new URLSearchParams(location.search).get('join');
@@ -147,7 +155,7 @@ export class App {
   private openSettings(): void {
     this.main.hide();
     this.lobby.hide();
-    this.settings.open(this.prefs, (p) => { this.prefs = p; savePrefs(p); this.applyPrefs(); }, () => this.showMenuForState());
+    this.settings.open(this.prefs, (p) => { this.prefs = p; savePrefs(p); this.applyPrefs(); }, () => this.showMenuForState(), this.renderer.gpuName());
   }
 
   private applyPrefs(): void {

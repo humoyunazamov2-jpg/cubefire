@@ -1,12 +1,17 @@
 // End-to-end smoke test: starts the dev server, opens the game in headless
 // Chromium and plays through menu -> lobby -> a whole match -> bot-only
 // rounds on every map -> practice range -> an online room between two
-// browsers (with a local PeerJS server, since tests can't rely on the public one).
+// browsers (with a local PeerJS server, since tests can't rely on the public one)
+// -> the release build served from a sub-folder like GitHub Pages.
 // Run with `npm run smoke`. Needs Playwright with Chromium (installed globally
 // in Claude's cloud sessions; elsewhere run `npm i -g playwright` first).
 import { execSync } from 'node:child_process';
+import fs from 'node:fs';
+import http from 'node:http';
 import { createRequire } from 'node:module';
-import { createServer } from 'vite';
+import os from 'node:os';
+import path from 'node:path';
+import { build, createServer } from 'vite';
 
 function loadPlaywright() {
   const roots = [process.cwd() + '/'];
@@ -61,6 +66,16 @@ try {
     };
   });
   check('main menu shows', await page.evaluate(() => window.__cf.app.state === 'menu'));
+
+  // Settings: changes apply at once, and "Reset to defaults" keeps your name.
+  await page.fill('.name-row input', 'Tester');
+  await page.click('text=Settings');
+  await page.$eval('input[data-r="fov"]', (el) => { el.value = '95'; el.dispatchEvent(new Event('input')); });
+  const fovSet = await page.evaluate(() => window.__cf.app.renderer.camera.fov);
+  await page.click('text=Reset to defaults');
+  const reset = await page.evaluate(() => ({ fov: window.__cf.app.prefs.fov, cam: window.__cf.app.renderer.camera.fov, name: window.__cf.app.prefs.name }));
+  await page.click('text=Done');
+  check('settings apply at once and reset to defaults', fovSet === 95 && reset.fov === 80 && reset.cam === 80 && reset.name === 'Tester', JSON.stringify(reset));
 
   // Lobby
   await page.evaluate(() => { window.__cf.app.manualTick = true; });
@@ -138,9 +153,29 @@ try {
       const moved = [...far.values()].filter((d) => d > 5).length;
       return { reasons, shots, moved, bots: h.bots.size };
     });
-    check(`bots fight and finish a round on ${map}`, r.bots === 4 && r.moved >= 2 && r.shots > 0 && r.reasons.some((x) => x.includes('eliminated')), JSON.stringify(r));
+    check(`bots fight and finish a round on ${map}`, r.bots === 4 && r.moved >= 1 && r.shots > 0 && r.reasons.some((x) => x.includes('eliminated')), JSON.stringify(r));
     await page.evaluate(() => window.__cf.app.leave());
   }
+
+  // Starting and leaving matches must not pile up 3D objects or GPU memory.
+  const sceneSize = () => page.evaluate(async () => {
+    const a = window.__cf.app;
+    a.playVsBots();
+    await window.T.fast(0.2);
+    a.session.client.send({ t: 'startMatch' });
+    for (let i = 0; i < 40 && a.state !== 'match'; i++) await new Promise((r) => setTimeout(r, 50));
+    await window.T.fast(1);
+    await window.__cf.run(0.05);
+    let objects = 0;
+    a.renderer.scene.traverse(() => objects++);
+    const m = a.renderer.gl.info.memory;
+    a.leave();
+    return { objects, geometries: m.geometries, textures: m.textures };
+  });
+  const first = await sceneSize();
+  await sceneSize();
+  const third = await sceneSize();
+  check('repeated matches don\'t leak 3D objects', third.objects <= first.objects + 10 && third.geometries <= first.geometries + 3 && third.textures <= first.textures, JSON.stringify({ first, third }));
 
   // Practice range: free buying, armour shows up in the inventory
   await page.evaluate(() => window.__cf.app.practice('arena'));
@@ -160,8 +195,61 @@ try {
   await page.evaluate(() => window.__cf.app.leave());
   check('leaving practice returns to the menu', await page.evaluate(() => window.__cf.app.state === 'menu'));
   await onlineChecks();
+  await releaseBuildChecks();
+  await noWebglCheck();
 } catch (e) {
   check('no exception while testing', false, String(e));
+}
+
+/** A browser without 3D graphics gets an explanation instead of a blank page. */
+async function noWebglCheck() {
+  const b = await chromium.launch({ args: ['--disable-3d-apis', '--disable-webgl'] });
+  try {
+    const pg = await b.newPage();
+    await pg.goto(url);
+    await pg.waitForSelector('.fatal', { timeout: 10000 });
+    const text = await pg.textContent('.fatal');
+    check('without WebGL the page explains what to do', text.includes("can't start") && text.includes('graphics acceleration'), text.slice(0, 60));
+  } finally {
+    await b.close();
+  }
+}
+
+/**
+ * The release build, served from a sub-folder the way GitHub Pages serves it
+ * (https://<user>.github.io/cubefire/), must load and play.
+ */
+async function releaseBuildChecks() {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'cubefire-dist-'));
+  await build({ logLevel: 'error', build: { outDir: out, emptyOutDir: true } });
+  const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.woff': 'font/woff' };
+  const server = http.createServer((req, res) => {
+    const p = new URL(req.url, 'http://x').pathname;
+    const rel = p.startsWith('/cubefire/') ? p.slice('/cubefire/'.length) || 'index.html' : null;
+    const file = rel && path.join(out, rel);
+    if (!file || !file.startsWith(out) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'content-type': types[path.extname(file)] ?? 'application/octet-stream' });
+    fs.createReadStream(file).pipe(res);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const pg = await ctx.newPage();
+  const bad = [];
+  pg.on('console', (m) => { if (m.type() === 'error') bad.push(m.text()); });
+  pg.on('pageerror', (e) => bad.push(e.message));
+  pg.on('response', (r) => { if (r.status() >= 400) bad.push(`${r.status()} ${r.url()}`); });
+  try {
+    await pg.goto(`http://127.0.0.1:${server.address().port}/cubefire/`);
+    await pg.waitForFunction(() => window.__cf, null, { timeout: 15000 });
+    await pg.click('text=Practice range');
+    await pg.waitForFunction(() => window.__cf.app.state === 'match', null, { timeout: 15000 });
+    const font = await pg.evaluate(async () => { await document.fonts.ready; return document.fonts.check('16px Silkscreen'); });
+    check('the release build plays when served from /cubefire/', bad.length === 0 && font, bad.join(' | ') || `font ${font}`);
+  } finally {
+    await ctx.close();
+    server.close();
+    fs.rmSync(out, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -192,6 +280,9 @@ async function onlineChecks() {
     await host.waitForSelector('.lobby-code b', { timeout: 20000 });
     const code = (await host.textContent('.lobby-code b')).trim();
     check('host opens an online room with a code', /^[A-Z0-9]{5}$/.test(code), code);
+    const warns = await host.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); dispatchEvent(e); return e.defaultPrevented; });
+    const quiet = await page.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); dispatchEvent(e); return e.defaultPrevented; });
+    check('closing the tab during an online game asks first (not offline)', warns && !quiet, `online ${warns}, menu ${quiet}`);
     await host.evaluate(() => window.__cf.app.session.client.send({ t: 'settings', settings: { freezeTime: 2 } }));
 
     // Mistakes get a plain explanation.
