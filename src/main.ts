@@ -1,74 +1,88 @@
 import '@fontsource/silkscreen/400.css';
 import './style.css';
+import { sfx } from './audio/sfx';
+import { GameClient } from './client/client';
+import { loadPrefs } from './client/prefs';
 import { Renderer } from './engine/renderer';
 import { Input } from './game/input';
-import { LocalPlayer } from './game/localPlayer';
-import { settle } from './game/physics';
-import { buildTestMap } from './maps/testMap';
-import { PlayerModel } from './render/playerModel';
-import type { WeaponId } from './game/weapons';
+import { HostSession, type BotBrain } from './host/host';
+import type { HostPlayer } from './host/hostPlayer';
+import { localPair } from './net/link';
+import type { C2H, H2C } from './net/protocol';
+import { BuyMenu } from './ui/buyMenu';
+import { Hud } from './ui/hud';
+import { Scoreboard } from './ui/scoreboard';
 
-// Part 2 harness: walk the test map in first person among a few dummy characters.
+// Part 3 harness: practice range against strafing dummies.
 const app = document.getElementById('app')!;
 const renderer = new Renderer(app);
-const { world, env } = buildTestMap();
-renderer.setWorld(world, env);
-
 const input = new Input(renderer.canvas);
-const me = new LocalPlayer(world);
-me.spawn(20.5, 5, 24.5, 0);
-settle(world, me.body);
+const hud = new Hud(app);
+const ui = { hud, buy: new BuyMenu(app), scores: new Scoreboard(app) };
+const prefs = loadPrefs();
+
+const host = new HostSession('TEST', { map: 'dunes', teamSize: 4, fillBots: false });
+host.sandbox = true;
+// Dummy bots strafe back and forth so there is something to shoot at.
+host.botFactory = (_h, p: HostPlayer): BotBrain => {
+  let t = Math.random() * 10;
+  const base = { x: 0, z: 0 };
+  return {
+    onRoundStart() { base.x = p.p[0]; base.z = p.p[2]; },
+    update(dt) {
+      t += dt;
+      const off = Math.sin(t * 0.9) * 2.5;
+      p.p = [base.x + off, p.p[1], base.z];
+      p.v = [Math.cos(t * 0.9) * 2.25, 0, 0];
+      p.yaw = Math.PI;
+      p.crouch = Math.sin(t * 0.3) > 0.7 ? 1 : 0;
+    },
+  };
+};
+
+const [hostEnd, clientEnd] = localPair<H2C, C2H>();
+host.connect(hostEnd, true);
+const client = new GameClient(renderer, input, ui, clientEnd, prefs.name || 'You', prefs);
+client.sandbox = true;
+client.onWantCursor = (free) => (free ? input.releaseLock() : input.requestLock());
+
+setTimeout(() => {
+  host.addBot(1); host.addBot(1); host.addBot(1);
+  host.startMatch();
+  // Put the dummies in a row across the courtyard.
+  const spots: [number, number, number][] = [[14.5, 5, 14.5], [20.5, 5, 13.5], [26.5, 5, 15.5]];
+  [...host.players.values()].filter((p) => p.bot).forEach((p, i) => {
+    p.alive = true; p.hp = 100; p.p = [...spots[i]]; p.team = 1;
+    host.bots.get(p.id)?.onRoundStart?.();
+  });
+  const me = [...host.players.values()].find((p) => !p.bot)!;
+  me.team = 0;
+  host.spawnPlayer(me, true);
+}, 50);
 
 const overlay = document.createElement('div');
-overlay.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);font-size:28px;cursor:pointer';
-overlay.textContent = 'Click to play';
+overlay.style.cssText = 'position:fixed;inset:0;display:flex;flex-direction:column;gap:12px;align-items:center;justify-content:center;background:rgba(0,0,0,.45);font-size:28px;cursor:pointer;z-index:10';
+overlay.innerHTML = 'Click to play<small style="font-size:12px;opacity:.7">B buy · 1-4 weapons · R reload · right-click scope/heavy · G drop · Tab scores</small>';
 app.appendChild(overlay);
-overlay.onclick = () => input.requestLock();
-document.addEventListener('pointerlockchange', () => (overlay.style.display = input.locked ? 'none' : 'flex'));
-const cross = document.createElement('div');
-cross.style.cssText = 'position:fixed;left:50%;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;background:linear-gradient(#fff,#fff) center/2px 14px no-repeat,linear-gradient(#fff,#fff) center/14px 2px no-repeat;mix-blend-mode:difference;pointer-events:none';
-app.appendChild(cross);
-
-const dummies: { m: PlayerModel; x: number; z: number; weapon: WeaponId; mode: string }[] = [];
-const spots: [number, number, number, WeaponId, string][] = [
-  [0, 16, 20, 'rifle', 'walk'], [1, 24, 22, 'sniper', 'stand'], [1, 14, 16, 'smg', 'crouch'],
-  [0, 26, 26, 'knife', 'stand'], [1, 22, 27, 'deagle', 'dead'],
-];
-spots.forEach(([team, x, z, weapon, mode], i) => {
-  const m = new PlayerModel(team, i);
-  m.setName(`Dummy ${i + 1}`);
-  m.root.position.set(x + 0.5, 5, z + 0.5);
-  renderer.scene.add(m.root);
-  dummies.push({ m, x: x + 0.5, z: z + 0.5, weapon, mode });
-});
+overlay.onclick = () => { sfx.unlock(); input.requestLock(); };
+document.addEventListener('pointerlockchange', () => (overlay.style.display = input.locked || ui.buy.isOpen || hud.chatOpen ? 'none' : 'flex'));
 
 let last = performance.now();
-let t = 0;
+function step(dt: number) {
+  host.update(dt);
+  client.update(dt);
+  client.render(dt);
+  input.endFrame();
+}
 function frame(now: number) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   step(dt);
   requestAnimationFrame(frame);
 }
-function step(dt: number) {
-  t += dt;
-  if (input.locked) me.look(input);
-  me.update(dt, input.locked || (window as unknown as { __free?: boolean }).__free ? input : null, 1);
-  me.applyCamera(renderer.camera, dt);
-  for (const d of dummies) {
-    let speed = 0, yaw = t * 0.3;
-    if (d.mode === 'walk') {
-      const a = t * 0.8;
-      d.m.root.position.set(d.x + Math.cos(a) * 3, 5, d.z + Math.sin(a) * 3);
-      yaw = -a; speed = 2.4;
-    }
-    d.m.update({ yaw, pitch: Math.sin(t) * 0.5, crouch: d.mode === 'crouch' ? 1 : 0, speed, onGround: true, alive: d.mode !== 'dead', weapon: d.weapon }, dt);
-  }
-  renderer.render(dt, false);
-  input.endFrame();
-}
 requestAnimationFrame(frame);
 
-/** Advance n frames of dt seconds without waiting for the browser (tests in a hidden tab). */
-const run = (seconds: number, dt = 1 / 60) => { for (let i = 0; i < Math.round(seconds / dt); i++) step(dt); };
-Object.assign(window, { __cf: { renderer, world, me, input, dummies, run } });
+const run = async (seconds: number, dt = 1 / 60) => {
+  for (let i = 0; i < Math.round(seconds / dt); i++) { step(dt); if (i % 10 === 0) await Promise.resolve(); }
+};
+Object.assign(window, { __cf: { renderer, input, host, client, run } });

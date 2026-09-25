@@ -83,7 +83,8 @@ export class VoxelWorld {
     dx: number, dy: number, dz: number,
     maxDist: number, visit: TraverseFn,
   ): void {
-    const len = Math.hypot(dx, dy, dz) || 1;
+    // Plain sqrt (not Math.hypot) keeps results bit-identical across browsers.
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
     dx /= len; dy /= len; dz /= len;
     let x = Math.floor(ox), y = Math.floor(oy), z = Math.floor(oz);
     const stepX = dx > 0 ? 1 : dx < 0 ? -1 : 0;
@@ -124,7 +125,7 @@ export class VoxelWorld {
     dx: number, dy: number, dz: number,
     maxDist: number, accept: BlockFilter = (id) => BLOCKS[id].solid,
   ): RayHit | null {
-    const len = Math.hypot(dx, dy, dz) || 1;
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
     const ux = dx / len, uy = dy / len, uz = dz / len;
     let result: RayHit | null = null;
     this.traverse(ox, oy, oz, ux, uy, uz, maxDist, (id, x, y, z, tIn, _tOut, nx, ny, nz) => {
