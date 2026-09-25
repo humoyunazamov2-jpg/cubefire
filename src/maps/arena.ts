@@ -46,8 +46,9 @@ export const arena: MapDef = {
 
     // Middle: metal crouch-cover and the central pillar.
     b.box(19, 5, 12, 21, 6, 13, B.metal).box(19, 5, 26, 21, 6, 27, B.metal);
-    b.box(26, 5, 17, 27, 9, 22, B.stoneBricks).box(26, 10, 19, 27, 10, 20, B.lamp);
-    b.box(25, 5, 17, 25, 5, 22, B.stoneBrickSlab);
+    // Wide enough that the two spawns can't see each other past its edges.
+    b.box(26, 5, 16, 27, 9, 23, B.stoneBricks).box(26, 10, 19, 27, 10, 20, B.lamp);
+    b.box(25, 5, 16, 25, 5, 23, B.stoneBrickSlab);
 
     b.mirrorX();
 

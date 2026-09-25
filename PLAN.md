@@ -24,8 +24,8 @@ work. Read it top to bottom before changing anything.
 | 3 | Weapons and combat | **Done** |
 | 4 | Maps | **Done** |
 | 5 | CS2 match rules and game UI | **Done** (tested end to end in headless Chromium; `npm run smoke`) |
-| 6 | Bots | **Next** |
-| 7 | Friends multiplayer (rooms over the internet) | Not started |
+| 6 | Bots | **Done** (bot-only matches simulated on all maps; `npm run smoke`) |
+| 7 | Friends multiplayer (rooms over the internet) | **Next** |
 | 8 | Polish and release | Not started |
 
 Git history has one commit per finished part (`git log --oneline`); Part 5
@@ -85,11 +85,29 @@ node node_modules/vite/bin/vite.js --port 5174 --strictPort --host 127.0.0.1   #
 `scripts/smoke.mjs` starts its own Vite server, opens the game in headless
 Chromium (SwiftShader WebGL) and checks: main menu → lobby (settings change) →
 match start → buy phase → round win and payout → halftime swap and $800 reset
-→ match end 3:1 with scoreboard → back to lobby → main menu → practice range
-(free buys, armour) → menu, plus "no console errors". Exit code 0 = all passed.
+→ match end 3:1 with scoreboard → back to lobby → main menu → a bot-only 2v2
+on each map (you spectate; bots must leave spawn, shoot, and finish a round by
+elimination) → practice range (free buys, armour, bots wander and hold fire)
+→ menu, plus "no console errors". Exit code 0 = all passed.
 Run it after every change. It needs Playwright (global in cloud sessions; on
 the Windows laptop it is not installed — `npm i -g playwright` there first).
-Extend it when Parts 6–8 add features.
+Extend it when Parts 7–8 add features.
+
+### Simulating bots without rendering
+
+For bot work, create a `HostSession` directly in the page and step it with no
+client at all (thousands of times faster than real time):
+```js
+const { HostSession } = await import('/src/host/host.ts');
+const { createBot } = await import('/src/bots/bot.ts');
+const h = new HostSession('SIM', { map: 'dunes', teamSize: 4, botSkill: 1, winRounds: 7 });
+h.botFactory = createBot;
+h.startMatch();                       // fills both teams with bots
+while (h.inMatch) h.update(1 / 60);   // a whole match takes well under a second
+```
+Wrap `h.botFire` / `h.botThrow` / `h.broadcast` to count shots, grenades and
+round results. A full bot's state is reachable as `h.bots.get(id)` (TS-private
+fields are plain properties at runtime).
 
 ### Testing in Claude's browser pane / headless Chromium
 
@@ -164,7 +182,9 @@ Authority split (friends-only, so trust is fine):
 | `src/audio/sfx.ts` | Procedural WebAudio sounds (gunshots, footsteps per surface, explosions…) |
 | `src/ui/hud.ts`, `buyMenu.ts`, `scoreboard.ts` | HUD, buy menu, scoreboard (DOM overlays) |
 | `src/ui/menus.ts`, `menus.css` | Main menu, settings, how-to-play, pause menu, lobby, click-to-play prompt, loading and notice screens |
-| `src/app.ts` | `App`: owns renderer/input/UI, switches menu ↔ lobby ↔ match, starts sessions (`playVsBots`, `practice`), pointer-lock/pause handling, menu backdrop, auto graphics quality. `makeBot` placeholder bot factory lives here until Part 6 |
+| `src/app.ts` | `App`: owns renderer/input/UI, switches menu ↔ lobby ↔ match, starts sessions (`playVsBots`, `practice`), pointer-lock/pause handling, menu backdrop, auto graphics quality. Sets `host.botFactory = createBot` |
+| `src/bots/nav.ts` | `NavGrid`: walkable nodes (one per column and floor height) linked by walk / jump / drop edges, reachability from spawns, A*, straight-walk test. Built once per map and cached |
+| `src/bots/bot.ts` | `Bot` (a `BotBrain`): per-round plan, pathing, perception, aiming and shooting, buying, grenades, reactions. Skill table `SKILLS` at the top |
 | `src/host/ticker.ts` | Web Worker-driven 60 Hz tick so the host keeps simulating in a background tab |
 | `src/maps/*` | `builder.ts` toolkit; maps `dunes`, `frostbite`, `arena`; `testMap.ts` is the old engine test scene and is no longer used (safe to delete) |
 | `src/main.ts` | Boots `App`, runs the frame loop, exposes the `__cf` test hook |
@@ -213,13 +233,42 @@ Bugs found and fixed on the first run:
   own camera/FOV); now mapped through screen space and start at the muzzle.
 - How-to-play said the wheel switches weapons; by default it jumps.
 
-### Part 6 — Bots
-Implement `BotBrain` (`host.ts` exports the interface; `host.botFactory`).
-Needed: nav grid over walkable cells + A*; route to `map.points` / enemy side;
-vision (FOV, `world.lineOfSight`, `host.smokeBlocks`, `blindUntil`); reaction
-time and aim error by `settings.botSkill` (0–2); counter-strafe then shoot
-with `host.botFire`; buying with `host.botBuy` by money; occasional grenades
-with `host.botThrow`; react to `onDamaged` / `onSound`.
+### Part 6 — Bots (DONE)
+`src/bots/bot.ts` + `src/bots/nav.ts`; the host calls them through `BotBrain`
+(`update`, `onRoundStart`, `onInventory`, `onDamaged`, `onSound`).
+- **Movement**: same `stepMove` physics as people (2 × 1/120 s per host tick).
+  A* over `NavGrid`; waypoints are skipped when a straight walk is safe; jumps
+  on jump edges; stuck detection hops, then re-paths, then picks a new goal.
+  At most 2 path searches per host tick across all bots (no stutter).
+- **Plan per round**: 40% hold a spot on their own half (for 12–30 s after
+  the round goes live), the rest push to an enemy-side point. Teammates claim
+  different points. After that they hunt through unvisited enemy-side points
+  and the enemy spawn; 50 s into a round they head for a rough guess of where
+  the nearest enemy is, so rounds don't stall.
+- **Senses**: field of view by skill, `world.lineOfSight` to head or chest,
+  `host.smokeBlocks`, blind while `blindUntil`. They hear gunshots and grenades
+  (`onSound`) and running footsteps within 14 m, turn towards damage
+  (`onDamaged`), and chase the last-seen position when they lose sight.
+- **Shooting**: reaction delay, aim error that shrinks while tracking, turn
+  speed, head-or-chest choice, recoil control, bursts by range, counter-strafe
+  before shooting, strafing between bursts, crouching at range, scoping snipers,
+  switching to the pistol when the rifle runs dry up close, no shooting through
+  teammates. Everything goes through their own `Arsenal` and `host.botFire`.
+- **Skill** (`settings.botSkill`), measured on a standing target with a rifle:
+  Easy ≈ 0.9 s to kill at 8 m / 2 s at 30 m; Normal ≈ 0.5 / 1.05 s; Hard ≈
+  0.3 / 0.9 s. Tune the `SKILLS` table in `bot.ts`.
+- **Buying** (during freeze, with a random delay): pistol round kevlar / Thumper
+  / grenades; rifle + armour when they can afford both; force-buy an SMG or
+  shotgun sometimes; otherwise save. Grenades from spare money.
+- **Grenades**: HE at a spot an enemy was just seen, flash before chasing into
+  one (then look away), smoke early in a push. Throw angles are found by
+  simulating the real grenade physics (lands within ~0.1–0.7 m).
+- **Practice range**: bots wander their half at walking speed and never shoot.
+- Map fix found by bots: Arena's two spawns could see each other past the
+  central pillar; the pillar is now one block wider on each side.
+- Simulated results (8 bots): about 0.03 ms per host tick; no timeouts in
+  ~100 simulated rounds; rounds last ~8 s (Arena) to ~18 s (Dunes/Frostbite).
+  Matches can be one-sided because the economy snowballs, as in CS.
 
 ### Part 7 — Friends multiplayer
 - PeerJS: host opens `new Peer('cubefire-v1-<CODE>')`; clients connect to it.
@@ -249,6 +298,9 @@ private-repo conflict above).
 - The lobby chat is shown in "Play vs bots" too (only join notes appear there
   until Part 7).
 - A spectator who picks a team mid-match gets that round's win/loss money.
+- A few `map.points` sit inside blocks (e.g. Dunes (38, 5, 21.5)); bots snap
+  them to the nearest reachable floor, so it is harmless.
+- Bots are short-sighted beyond 110 m and don't hear footsteps beyond 14 m.
 - `tsc` here is TypeScript 7 (native). `noUnusedLocals` is on: unused
   variables fail the typecheck.
 - Line endings: `.gitattributes` forces LF (except `*.cmd` = CRLF).
