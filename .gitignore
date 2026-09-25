@@ -7,14 +7,19 @@ node_modules/
 # Build output
 dist/
 
-# Environment / secrets
+# Local environment / secrets
 .env
 .env.*
+*.local
+
+# Logs
+*.log
+npm-debug.log*
+logs/
 
 # Machine-specific Claude Code config
 .claude/
 
-# Logs and OS files
-*.log
+# OS files
 .DS_Store
 Thumbs.db
