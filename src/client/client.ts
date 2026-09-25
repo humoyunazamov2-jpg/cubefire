@@ -12,6 +12,7 @@ import { WEAPONS, type GrenadeId, type ItemId, type WeaponId } from '../game/wea
 import { MAPS } from '../maps';
 import { inBox, type BuiltMap } from '../maps/types';
 import type { Link } from '../net/link';
+import { playerToken } from '../net/peer';
 import {
   PF_BLIND, PF_RELOADING, PF_SCOPED, PF_WALKING, PROTOCOL_VERSION,
   type C2H, type DroppedItem, type H2C, type HitReport, type MatchState, type MapId,
@@ -108,7 +109,7 @@ export class GameClient {
     this.view = new ViewModel(renderer.viewCamera);
     link.onMessage = (m) => this.handle(m);
     link.onClose = () => this.onClosed?.();
-    link.send({ t: 'hello', name, v: PROTOCOL_VERSION });
+    link.send({ t: 'hello', name, v: PROTOCOL_VERSION, token: playerToken() });
     ui.buy.onBuy = (item) => this.buy(item);
     ui.buy.onClose = () => this.onWantCursor?.(false);
     this.applyPrefs(prefs);

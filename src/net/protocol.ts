@@ -3,7 +3,8 @@ import type { GrenadeId, ItemId, WeaponId, Zone } from '../game/weapons';
 // Messages between the host (who runs the match) and every client, including
 // the host's own client. Everything is plain JSON.
 
-export const PROTOCOL_VERSION = 1;
+/** Bump whenever messages change; mismatched players are turned away with a clear message. */
+export const PROTOCOL_VERSION = 2;
 
 export type V3 = [number, number, number];
 export type TeamSlot = 0 | 1 | -1; // -1 = spectator
@@ -120,7 +121,7 @@ export interface DroppedItem {
 
 // ---- Client -> Host ----
 export type C2H =
-  | { t: 'hello'; name: string; v: number }
+  | { t: 'hello'; name: string; v: number; token?: string }
   | { t: 'state'; p: V3; v: V3; yaw: number; pitch: number; c: number; g: 0 | 1; w: WeaponId; ammo: [number, number]; f: number }
   | { t: 'fire'; w: WeaponId; o: V3; ends: V3[]; hits: HitReport[]; alt?: boolean }
   | { t: 'throw'; g: GrenadeId; o: V3; v: V3 }

@@ -8,7 +8,8 @@ import { createBot } from './bots/bot';
 import { HostSession } from './host/host';
 import { Ticker } from './host/ticker';
 import { MAPS } from './maps';
-import { localPair } from './net/link';
+import { localPair, type Link } from './net/link';
+import { cleanCode, joinRoom, RoomServer } from './net/peer';
 import type { C2H, H2C, MapId, RoomSettings } from './net/protocol';
 import { BuyMenu } from './ui/buyMenu';
 import { Hud } from './ui/hud';
@@ -24,6 +25,8 @@ interface Session {
   offline: boolean;
   practice: boolean;
   code: string;
+  /** The online room (host side), closed when leaving. */
+  net: RoomServer | null;
 }
 
 /**
@@ -49,6 +52,9 @@ export class App {
   private loading: Loading;
   private notice: Notice;
   private backdropMap: MapId = 'dunes';
+  /** A room being opened or joined, until it is ready. */
+  private pendingNet: RoomServer | null = null;
+  private pendingJoin: object | null = null;
   private backdropReady = false;
   private orbit = 0;
   private fpsFrames = 0;
@@ -100,6 +106,9 @@ export class App {
     });
     this.applyPrefs();
     this.showMenu();
+    // Invite links look like ...?join=CODE: fill in the code for them.
+    const join = new URLSearchParams(location.search).get('join');
+    if (online && join) this.main.prefillCode(cleanCode(join));
   }
 
   // ---------------------------------------------------------------- screens
@@ -126,6 +135,7 @@ export class App {
     this.useBackdrop();
     const c = this.session?.client;
     if (c?.room) this.lobby.render(c.room, c.myId, !!this.session?.offline);
+    else this.lobby.connecting();
   }
 
   private showMenuForState(): void {
@@ -190,10 +200,11 @@ export class App {
 
   // ---------------------------------------------------------------- sessions
 
-  private newClient(link: ReturnType<typeof localPair<H2C, C2H>>[1], s: Omit<Session, 'client'>): GameClient {
+  private newClient(link: Link<H2C, C2H>, s: Omit<Session, 'client'>): GameClient {
     const client = new GameClient(this.renderer, this.input, { hud: this.hud, buy: this.buy, scores: this.scores }, link, this.prefs.name || 'Player', this.prefs);
     const session: Session = { ...s, client };
     this.session = session;
+    this.lobby.reset();
     client.sandbox = s.practice;
     client.onWantCursor = (free) => (free ? this.input.releaseLock() : this.input.requestLock());
     client.onRoom = (room) => {
@@ -237,7 +248,7 @@ export class App {
     const [hostEnd, clientEnd] = localPair<H2C, C2H>();
     host.connect(hostEnd, true);
     const ticker = this.manualTick ? null : new Ticker((dt) => host.update(dt));
-    this.newClient(clientEnd, { host, ticker, offline: true, practice: false, code: 'LOCAL' });
+    this.newClient(clientEnd, { host, ticker, offline: true, practice: false, code: 'LOCAL', net: null });
     this.showLobby();
   }
 
@@ -247,7 +258,7 @@ export class App {
     const [hostEnd, clientEnd] = localPair<H2C, C2H>();
     host.connect(hostEnd, true);
     const ticker = this.manualTick ? null : new Ticker((dt) => host.update(dt));
-    this.newClient(clientEnd, { host, ticker, offline: true, practice: true, code: 'PRACTICE' });
+    this.newClient(clientEnd, { host, ticker, offline: true, practice: true, code: 'PRACTICE', net: null });
     // Practice targets: three bots on the other team, then straight into the map.
     setTimeout(() => {
       for (let i = 0; i < 3; i++) host.addBot(1);
@@ -256,16 +267,67 @@ export class App {
     }, 30);
   }
 
+  /** Open a room friends can join with its code. This browser is the host. */
   hostOnline(): void {
-    this.notice.open('Coming soon', 'Online rooms arrive in the next update.', () => {});
+    this.leave(true);
+    this.hideAll();
+    this.loading.showText('Creating a room...');
+    let host: HostSession | null = null;
+    const server = new RoomServer(
+      (link) => host?.connect(link),
+      (code) => {
+        clearTimeout(slow);
+        if (this.pendingNet !== server) return;
+        this.pendingNet = null;
+        host = this.startHost({ teamSize: 2, fillBots: true }, false, code);
+        const [hostEnd, clientEnd] = localPair<H2C, C2H>();
+        host.connect(hostEnd, true);
+        const ticker = this.manualTick ? null : new Ticker((dt) => host!.update(dt));
+        this.newClient(clientEnd, { host, ticker, offline: false, practice: false, code, net: server });
+        this.showLobby();
+      },
+      (reason) => this.netFailed("Couldn't create a room", reason),
+    );
+    this.pendingNet = server;
+    const slow = setTimeout(() => {
+      if (this.pendingNet !== server) return;
+      server.destroy();
+      this.netFailed("Couldn't create a room", "The online service didn't answer. Check your internet connection and try again.");
+    }, 20000);
+    server.open();
   }
 
-  joinOnline(_code: string): void {
-    this.notice.open('Coming soon', 'Online rooms arrive in the next update.', () => {});
+  /** Join a friend's room by its code. */
+  joinOnline(code: string): void {
+    this.leave(true);
+    this.hideAll();
+    const clean = cleanCode(code);
+    this.loading.showText(`Joining room ${clean}...`);
+    const token = {};
+    this.pendingJoin = token;
+    joinRoom(clean, (link) => {
+      if (this.pendingJoin !== token) { link.close(); return; }
+      this.pendingJoin = null;
+      this.newClient(link, { host: null, ticker: null, offline: false, practice: false, code: clean, net: null });
+      this.showLobby();
+    }, (reason) => {
+      if (this.pendingJoin !== token) return;
+      this.pendingJoin = null;
+      this.netFailed("Couldn't join the room", reason);
+    });
+  }
+
+  private netFailed(title: string, reason: string): void {
+    this.pendingNet = null;
+    this.loading.hide();
+    this.showMenu();
+    this.notice.open(title, reason, () => {});
   }
 
   private copyInvite(code: string): void {
-    const url = `${location.origin}${location.pathname}?join=${code}`;
+    // Keep a test signalling server setting in the link, if one is in use.
+    const peer = new URLSearchParams(location.search).get('peer');
+    const url = `${location.origin}${location.pathname}?join=${code}${peer ? `&peer=${encodeURIComponent(peer)}` : ''}`;
     void navigator.clipboard?.writeText(`Join my Cubefire room: ${url} (code ${code})`).then(
       () => this.hud.toast('Invite copied', 2),
       () => this.hud.toast(`Code: ${code}`, 3),
@@ -276,10 +338,14 @@ export class App {
   leave(silent = false): void {
     const s = this.session;
     this.session = null;
+    this.pendingNet?.destroy();
+    this.pendingNet = null;
+    this.pendingJoin = null;
     if (s) {
       s.ticker?.stop();
       s.client.onClosed = null;
       s.client.dispose();
+      s.net?.destroy();
     }
     this.input.releaseLock();
     this.buy.close();
