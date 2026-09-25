@@ -66,6 +66,8 @@ export class HostSession {
   private acc = 0;
   /** Sandbox: no rounds, instant respawns, free money. Used by the practice range. */
   sandbox = false;
+  /** Players who dropped out of this match, by token, so they can rejoin where they were. */
+  private departed = new Map<string, { team: TeamSlot; money: number; stats: HostPlayer['stats'] }>();
 
   constructor(readonly code: string, settings: Partial<RoomSettings> = {}) {
     this.settings = { ...DEFAULT_SETTINGS, ...settings };
@@ -91,16 +93,29 @@ export class HostSession {
           return;
         }
         pid = this.nextId++;
-        const p = new HostPlayer(pid, cleanName(msg.name, pid), this.pickTeam(), false, isHost);
+        const token = typeof msg.token === 'string' ? msg.token.slice(0, 32) : '';
+        const back = this.inMatch && token ? this.departed.get(token) : undefined;
+        const p = new HostPlayer(pid, cleanName(msg.name, pid), back ? back.team : this.pickTeam(), false, isHost);
+        p.token = token;
         if (isHost) this.hostId = pid;
-        if (this.inMatch) { p.waiting = true; p.team = -1; }
+        if (this.inMatch) { p.waiting = true; if (!back) p.team = -1; }
+        if (back) {
+          // Rejoining the same match: same team (if there is still room), money and score.
+          this.departed.delete(token);
+          const onTeam = [...this.players.values()].filter((q) => q.team === back.team).length;
+          if (onTeam >= this.settings.teamSize) p.team = -1;
+          p.money = back.money;
+          p.stats = { ...back.stats, id: pid };
+          p.rejoined = true;
+        }
         this.players.set(pid, p);
         this.links.set(pid, link);
         link.send({ t: 'welcome', you: pid, room: this.roomInfo() });
         this.broadcastRoom();
         if (this.inMatch) {
           link.send({ t: 'start', map: this.settings.map, settings: this.settings });
-          this.note(`${p.name} joined (spectating until you pick a team)`);
+          this.note(back && p.team !== -1 ? `${p.name} is back and plays from next round` : `${p.name} joined (spectating until you pick a team)`);
+          this.broadcast({ t: 'stats', stats: [...this.players.values()].map((q) => q.stats) });
         } else this.note(`${p.name} joined`);
         return;
       }
@@ -112,6 +127,9 @@ export class HostSession {
       this.links.delete(pid);
       if (!p) return;
       if (p.alive && this.inMatch) this.dropOnDeath(p);
+      if (this.inMatch && p.token && p.team !== -1 && this.departed.size < 32) {
+        this.departed.set(p.token, { team: p.team, money: p.money, stats: { ...p.stats } });
+      }
       this.players.delete(pid);
       this.note(`${p.name} left`);
       this.broadcastRoom();
@@ -591,6 +609,7 @@ export class HostSession {
   }
 
   startMatch(mapOverride?: BuiltMap): void {
+    this.departed.clear();
     this.fillBots();
     const map = mapOverride ?? MAPS[this.settings.map].build();
     this.map = map;
@@ -620,6 +639,7 @@ export class HostSession {
 
   endMatch(): void {
     this.inMatch = false;
+    this.departed.clear();
     this.map = null;
     this.world = null;
     this.items.clear();
@@ -659,8 +679,12 @@ export class HostSession {
     this.items.clear();
     this.nades.clear();
     this.smokes = [];
-    // Players who joined mid-match and picked a team come in now.
-    for (const p of this.players.values()) if (p.waiting && p.team !== -1) { p.waiting = false; p.money = ECONOMY.startMoney; }
+    // Players who joined mid-match and picked a team come in now (rejoiners keep their money).
+    for (const p of this.players.values()) if (p.waiting && p.team !== -1) {
+      p.waiting = false;
+      if (!p.rejoined) p.money = ECONOMY.startMoney;
+      p.rejoined = false;
+    }
     const used: [number, number] = [0, 0];
     for (const p of this.players.values()) {
       p.damageTo.clear();

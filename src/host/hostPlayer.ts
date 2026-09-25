@@ -32,6 +32,10 @@ export class HostPlayer {
   blindUntil = 0;
   /** Joined mid-match: waits for the next round. */
   waiting = false;
+  /** Came back to the same match after dropping out: keeps their money. */
+  rejoined = false;
+  /** Per-tab id the player's browser sends, to recognise them if they rejoin. */
+  token = '';
 
   constructor(readonly id: number, public name: string, public team: TeamSlot, readonly bot: boolean, readonly isHost = false) {
     this.stats = { id, kills: 0, deaths: 0, assists: 0, damage: 0, hs: 0, mvps: 0 };

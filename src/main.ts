@@ -3,7 +3,7 @@ import './style.css';
 import './ui/hud.css';
 import { App } from './app';
 
-const app = new App(document.getElementById('app')!);
+const app = new App(document.getElementById('app')!, true);
 
 let last = performance.now();
 function frame(now: number) {

@@ -1,6 +1,7 @@
 // End-to-end smoke test: starts the dev server, opens the game in headless
 // Chromium and plays through menu -> lobby -> a whole match -> bot-only
-// rounds on every map -> practice range.
+// rounds on every map -> practice range -> an online room between two
+// browsers (with a local PeerJS server, since tests can't rely on the public one).
 // Run with `npm run smoke`. Needs Playwright with Chromium (installed globally
 // in Claude's cloud sessions; elsewhere run `npm i -g playwright` first).
 import { execSync } from 'node:child_process';
@@ -22,7 +23,8 @@ const server = await createServer({ server: { port: 5199, strictPort: false, hos
 await server.listen();
 const url = server.resolvedUrls.local[0];
 
-const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+// The WebRTC flags let two local browsers connect directly without mDNS or STUN.
+const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--disable-features=WebRtcHideLocalIpsWithMdns', '--allow-loopback-in-peer-connection'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const errors = [];
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -157,8 +159,126 @@ try {
   check('practice bots walk around and hold fire', practice.moved >= 1 && practice.hp === 100, JSON.stringify(practice));
   await page.evaluate(() => window.__cf.app.leave());
   check('leaving practice returns to the menu', await page.evaluate(() => window.__cf.app.state === 'menu'));
+  await onlineChecks();
 } catch (e) {
   check('no exception while testing', false, String(e));
+}
+
+/**
+ * Online rooms: a PeerJS signalling server on this machine, then a host and a
+ * friend in two separate browser profiles talking over real WebRTC.
+ */
+async function onlineChecks() {
+  const { PeerServer } = createRequire(process.cwd() + '/')('peer');
+  let httpServer = null;
+  PeerServer({ port: 9199, host: '127.0.0.1', path: '/' }, (s) => { httpServer = s; });
+  await new Promise((r) => setTimeout(r, 300));
+  const base = `${url}?peer=127.0.0.1:9199`;
+  const open = async (name) => {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    const pg = await ctx.newPage();
+    pg.on('console', (m) => { if (m.type() === 'error') errors.push(`${name}: ${m.text()}`); });
+    pg.on('pageerror', (e) => errors.push(`${name}: ${e.message}`));
+    await pg.goto(base);
+    await pg.waitForFunction(() => window.__cf);
+    return pg;
+  };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const host = await open('host'), friend = await open('friend');
+  const players = () => host.evaluate(() => [...window.__cf.app.session.host.players.values()].filter((p) => !p.bot).map((p) => ({ name: p.name, team: p.team, alive: p.alive, waiting: p.waiting })));
+  try {
+    await host.fill('.name-row input', 'Hosty');
+    await host.click('text=Host a room');
+    await host.waitForSelector('.lobby-code b', { timeout: 20000 });
+    const code = (await host.textContent('.lobby-code b')).trim();
+    check('host opens an online room with a code', /^[A-Z0-9]{5}$/.test(code), code);
+    await host.evaluate(() => window.__cf.app.session.client.send({ t: 'settings', settings: { freezeTime: 2 } }));
+
+    // Mistakes get a plain explanation.
+    await friend.evaluate(() => window.__cf.app.joinOnline('ZZZZZ'));
+    await friend.waitForSelector('.error-box', { timeout: 25000 });
+    const wrong = await friend.textContent('.error-box p');
+    check('a wrong room code is explained', wrong.includes('No room with that code'), wrong);
+    await friend.click('.error-box [data-a="ok"]');
+    const kick = await friend.evaluate(async (code) => {
+      const { joinRoom } = await import('/src/net/peer.ts');
+      return await new Promise((res) => {
+        joinRoom(code, (link) => {
+          link.onMessage = (m) => { if (m.t === 'kick') { res(m.reason); link.close(); } };
+          link.send({ t: 'hello', name: 'Oldie', v: 1 });
+        }, (r) => res('join failed: ' + r));
+        setTimeout(() => res('timeout'), 10000);
+      });
+    }, code);
+    check('an old game version is turned away', kick.includes('Different game version'), kick);
+
+    // Join with the invite link, which fills in the code.
+    await friend.goto(`${base}&join=${code}`);
+    await friend.waitForFunction(() => window.__cf);
+    await friend.fill('.name-row input', 'Frendo');
+    const prefilled = await friend.inputValue('[data-join] input');
+    await friend.click('[data-a="go"]');
+    await friend.waitForFunction(() => window.__cf.app.state === 'lobby' && window.__cf.app.session?.client.room, null, { timeout: 20000 });
+    await host.waitForFunction(() => window.__cf.app.session.client.room.roster.some((r) => r.name === 'Frendo'), null, { timeout: 10000 });
+    check('a friend joins with the invite link', prefilled === code, `prefilled ${prefilled}`);
+
+    await friend.fill('.lobby-chat input', 'hi host');
+    await friend.press('.lobby-chat input', 'Enter');
+    await host.click('.lobby [data-set="map=arena"]');
+    const synced = await Promise.all([
+      host.waitForFunction(() => document.querySelector('.lobby-chat .log').textContent.includes('hi host'), null, { timeout: 5000 }).then(() => true, () => false),
+      friend.waitForFunction(() => window.__cf.app.session.client.room.settings.map === 'arena', null, { timeout: 5000 }).then(() => true, () => false),
+    ]);
+    check('lobby chat and settings reach the other player', synced.every(Boolean), JSON.stringify(synced));
+
+    // Play: both load, the friend's movement shows up on the host.
+    await host.click('text=Start match');
+    await Promise.all([host, friend].map((pg) => pg.waitForFunction(() => window.__cf.app.state === 'match' && window.__cf.app.session.client.alive, null, { timeout: 20000 })));
+    await host.waitForFunction(() => window.__cf.app.session.host.phase === 'live', null, { timeout: 15000 });
+    const where = () => host.evaluate(() => [...window.__cf.app.session.host.players.values()].find((p) => p.name === 'Frendo').p);
+    const p0 = await where();
+    await friend.evaluate(() => { window.__cf.app.session.client.testMode = true; dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW' })); });
+    await wait(1000);
+    await friend.evaluate(() => dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyW' })));
+    await wait(300);
+    const p1 = await where();
+    const fast = await friend.evaluate(() => !!window.__cf.app.session.client.link.fast?.open);
+    check('both play; the friend\'s movement reaches the host', Math.hypot(p1[0] - p0[0], p1[2] - p0[2]) > 0.5 && fast, `moved ${Math.hypot(p1[0] - p0[0], p1[2] - p0[2]).toFixed(1)} m, fast channel ${fast}`);
+
+    // Damage crosses the network both ways.
+    await host.evaluate(() => { const h = window.__cf.app.session.host; const f = [...h.players.values()].find((p) => p.name === 'Frendo'); const b = [...h.players.values()].find((p) => p.bot && p.team !== f.team && p.alive); h.applyDamage(b, f, 'pistol', { id: f.id, zone: 'body', dist: 5, pen: 1 }); });
+    const botId = await host.evaluate(() => { const h = window.__cf.app.session.host; const f = [...h.players.values()].find((p) => p.name === 'Frendo'); return [...h.players.values()].find((p) => p.bot && p.team !== f.team && p.alive).id; });
+    await friend.evaluate((id) => window.__cf.app.session.client.send({ t: 'fire', w: 'pistol', o: [0, 0, 0], ends: [[1, 1, 1]], hits: [{ id, zone: 'body', dist: 10, pen: 1 }] }), botId);
+    await wait(600);
+    const hurt = { friend: await friend.evaluate(() => window.__cf.app.session.client.hp), bot: await host.evaluate((id) => window.__cf.app.session.host.players.get(id).hp, botId) };
+    check('damage crosses the network both ways', hurt.friend < 100 && hurt.bot < 100, JSON.stringify(hurt));
+
+    // A background tab stops the page's frame loop; the match must go on.
+    await host.evaluate(() => { window.requestAnimationFrame = () => 0; });
+    const t0 = await host.evaluate(() => window.__cf.app.session.host.time);
+    await wait(2000);
+    const t1 = await host.evaluate(() => window.__cf.app.session.host.time);
+    const snapAge = await friend.evaluate(() => performance.now() - window.__cf.app.session.client.lastSnap);
+    check('the match keeps running while the host\'s frames are paused', t1 - t0 > 1.5 && snapAge < 500, `host clock +${(t1 - t0).toFixed(2)} s in 2 s, friend's last snapshot ${snapAge.toFixed(0)} ms ago`);
+
+    // Dropping out and rejoining keeps your team.
+    await friend.evaluate(() => window.__cf.app.leave());
+    await host.waitForFunction(() => ![...window.__cf.app.session.host.players.values()].some((p) => p.name === 'Frendo'), null, { timeout: 20000 });
+    await friend.evaluate((code) => window.__cf.app.joinOnline(code), code);
+    await friend.waitForFunction(() => window.__cf.app.state === 'match', null, { timeout: 20000 });
+    const back = (await players()).find((p) => p.name === 'Frendo');
+    check('a friend who drops out rejoins on the same team', back?.team === 1 && back.waiting, JSON.stringify(back));
+
+    // Closing the room tells everyone.
+    await host.evaluate(() => window.__cf.app.leave());
+    await friend.waitForSelector('.error-box', { timeout: 25000 });
+    const closed = { title: await friend.textContent('.error-box h2'), state: await friend.evaluate(() => window.__cf.app.state) };
+    check('closing the room sends friends back to the menu', closed.title.includes('Connection closed') && closed.state === 'menu', JSON.stringify(closed));
+  } finally {
+    await host.context().close();
+    await friend.context().close();
+    httpServer?.close();
+  }
 }
 
 check('no errors in the browser console', errors.length === 0, errors.join(' | '));

@@ -25,8 +25,8 @@ work. Read it top to bottom before changing anything.
 | 4 | Maps | **Done** |
 | 5 | CS2 match rules and game UI | **Done** (tested end to end in headless Chromium; `npm run smoke`) |
 | 6 | Bots | **Done** (bot-only matches simulated on all maps; `npm run smoke`) |
-| 7 | Friends multiplayer (rooms over the internet) | **Next** |
-| 8 | Polish and release | Not started |
+| 7 | Friends multiplayer (rooms over the internet) | **Done** (two browsers over real WebRTC in `npm run smoke`; needs one real test with a friend, see Part 7) |
+| 8 | Polish and release | **Next** |
 
 Git history has one commit per finished part (`git log --oneline`); Part 5
 has two (the in-progress commit and the finishing one).
@@ -88,10 +88,13 @@ match start → buy phase → round win and payout → halftime swap and $800 re
 → match end 3:1 with scoreboard → back to lobby → main menu → a bot-only 2v2
 on each map (you spectate; bots must leave spawn, shoot, and finish a round by
 elimination) → practice range (free buys, armour, bots wander and hold fire)
-→ menu, plus "no console errors". Exit code 0 = all passed.
+→ menu → an online room between two browser profiles over real WebRTC with a
+local PeerJS server (wrong code, old version, invite link, chat/settings sync,
+movement and damage both ways, host frames paused, rejoin, room closed), plus
+"no console errors". Exit code 0 = all passed.
 Run it after every change. It needs Playwright (global in cloud sessions; on
 the Windows laptop it is not installed — `npm i -g playwright` there first).
-Extend it when Parts 7–8 add features.
+Extend it when Part 8 adds features.
 
 ### Simulating bots without rendering
 
@@ -173,6 +176,7 @@ Authority split (friends-only, so trust is fine):
 | `src/game/grenades.ts` | Grenade physics, flash blindness, HE damage |
 | `src/net/protocol.ts` | All message types (`C2H`, `H2C`), room settings, defaults |
 | `src/net/link.ts` | `Link` interface and in-memory pair |
+| `src/net/peer.ts` | Online rooms: `PeerLink` (a `Link` over two WebRTC data channels, keepalive, timeout), `RoomServer` (host side), `joinRoom` (friend side), room codes, `?peer=` test server option, per-tab rejoin token |
 | `src/host/host.ts` | `HostSession`: roster, bots hook, round state machine, economy, buying, damage, items, grenades |
 | `src/host/hostPlayer.ts` | Host-side player record and snapshot encoding |
 | `src/client/client.ts` | `GameClient`: map loading, local weapons, remote players, effects, HUD, spectating |
@@ -185,7 +189,7 @@ Authority split (friends-only, so trust is fine):
 | `src/app.ts` | `App`: owns renderer/input/UI, switches menu ↔ lobby ↔ match, starts sessions (`playVsBots`, `practice`), pointer-lock/pause handling, menu backdrop, auto graphics quality. Sets `host.botFactory = createBot` |
 | `src/bots/nav.ts` | `NavGrid`: walkable nodes (one per column and floor height) linked by walk / jump / drop edges, reachability from spawns, A*, straight-walk test. Built once per map and cached |
 | `src/bots/bot.ts` | `Bot` (a `BotBrain`): per-round plan, pathing, perception, aiming and shooting, buying, grenades, reactions. Skill table `SKILLS` at the top |
-| `src/host/ticker.ts` | Web Worker-driven 60 Hz tick so the host keeps simulating in a background tab |
+| `src/host/ticker.ts` | Web Worker-driven timer (60 Hz by default) so the host keeps simulating, and links keep their keepalives, in a background tab |
 | `src/maps/*` | `builder.ts` toolkit; maps `dunes`, `frostbite`, `arena`; `testMap.ts` is the old engine test scene and is no longer used (safe to delete) |
 | `src/main.ts` | Boots `App`, runs the frame loop, exposes the `__cf` test hook |
 | `scripts/smoke.mjs` | End-to-end smoke test in headless Chromium (`npm run smoke`) |
@@ -270,21 +274,57 @@ Bugs found and fixed on the first run:
   ~100 simulated rounds; rounds last ~8 s (Arena) to ~18 s (Dunes/Frostbite).
   Matches can be one-sided because the economy snowballs, as in CS.
 
-### Part 7 — Friends multiplayer
-- PeerJS: host opens `new Peer('cubefire-v1-<CODE>')`; clients connect to it.
-  Wrap `DataConnection` as a `Link` (JSON). Consider a second unreliable
-  channel for `state`/`snap`.
-- Lobby UI: room code + copy button, team lists with join buttons, team size
-  (1/2/4), map, rounds to win, fill with bots, bot skill, friendly fire,
-  start button for the host, chat. The host messages for all of this exist.
-- **Background-tab problem:** browsers pause `requestAnimationFrame` and
-  throttle timers in hidden tabs, which would freeze the match if the host
-  alt-tabs. Already handled by `src/host/ticker.ts` (Web Worker timer); just
-  verify it keeps ticking with real remote players connected.
-- Wire `App.hostOnline()` / `App.joinOnline(code)` and construct `App` with
-  `online = true`. The lobby already has "Copy invite" (URL with `?join=CODE`);
-  read `?join=` on startup and call `MainMenu.prefillCode`.
-- Handle disconnects, rejoin, version mismatch (`PROTOCOL_VERSION`).
+### Part 7 — Friends multiplayer (DONE)
+How it works:
+- The host's browser registers the PeerJS id `cubefire-v1-<CODE>` on PeerJS's
+  free public signalling server (`0.peerjs.com`, no account needed). Friends
+  look that id up and then talk to the host directly over WebRTC. PeerJS's
+  default ICE config includes Google STUN and PeerJS's public TURN relay.
+- Each friend opens two data channels, paired on the host by a random `cid`:
+  `rel` (reliable, ordered: everything important) and `fast` (unordered:
+  `snap` and `state`). Fast messages carry a sequence number and anything
+  older than the last one used is dropped. Messages are wrapped as `{ m }`,
+  keepalives are `{ k: 1 }`.
+- Keepalive every 2 s from a Web Worker timer (works in background tabs); a
+  link with no traffic for 15 s closes. A message that throws while being
+  handled is logged and ignored (one bad packet can't take the room down).
+- `App.hostOnline()` / `App.joinOnline(code)`; `new App(root, true)` shows
+  the Host/Join buttons. `?join=CODE` pre-fills the code; "Copy invite" builds
+  that link (and keeps a `?peer=` setting if one is in use).
+- Rejoin: every tab has a token in `sessionStorage` (survives a refresh) sent
+  in `hello`. If a player drops out mid-match and comes back with the same
+  token, they get their team (if there is still room), money and score back
+  and play from the next round.
+- `PROTOCOL_VERSION` is now 2; a mismatched player is told to refresh.
+- Clear messages for: service unreachable, room code not found, connection
+  timeout, room closed / host gone.
+
+Decisions made while the owner was away (sensible defaults):
+- **Public PeerJS server** for signalling: free and needs no account. If it
+  is ever down or rate-limited, run our own (`npx peerjs --port 9000`) and
+  open the game with `?peer=your-host:9000`.
+- **Room codes** are 5 characters without look-alikes (no 0/O, 1/I).
+- **Rejoining keeps money and score**, but you sit out the rest of the round.
+- **`peer`** (the PeerJS server) is a dev dependency, used only by the smoke
+  test, because the sandbox that runs the tests can't reach `0.peerjs.com`.
+
+Tested (headless Chromium, two separate browser profiles, real WebRTC, local
+signalling server): hosting, wrong code, old version, invite link, lobby chat
+and settings, starting a match, movement and damage both ways, fast channel
+in use, host's frame loop stopped (as in a background tab) with the match still
+running, dropping out and rejoining, host closing the room. Also: with the
+public server blocked, Host/Join show "Couldn't reach the online service"
+within a second.
+
+**Still needs one real test with a friend** (can't be done from the sandbox):
+1. Two different homes/networks: does WebRTC connect through both routers
+   (STUN), and through strict ones (PeerJS TURN relay)? If some friends can't
+   connect, a TURN server of our own may be needed.
+2. The public PeerJS server itself (blocked here).
+3. Feel over real latency (ping 30–120 ms): movement smoothness, hits.
+4. Host alt-tabs for a minute in a real (visible) browser: match keeps going.
+5. "Copy invite" to the clipboard (needs https, i.e. the deployed site).
+6. Firefox and Edge as well as Chrome.
 
 ### Part 8 — Polish and release
 Settings screen (sensitivity, FOV, volume, crosshair, graphics quality with
@@ -295,12 +335,16 @@ private-repo conflict above).
 ## Known problems / notes
 
 - Browser pane tab is hidden during automated tests → use `__cf.run()`.
-- The lobby chat is shown in "Play vs bots" too (only join notes appear there
-  until Part 7).
+- The lobby chat is also shown in "Play vs bots", where only join notes appear.
 - A spectator who picks a team mid-match gets that round's win/loss money.
 - A few `map.points` sit inside blocks (e.g. Dunes (38, 5, 21.5)); bots snap
   them to the nearest reachable floor, so it is harmless.
 - Bots are short-sighted beyond 110 m and don't hear footsteps beyond 14 m.
+- Online tests use `?peer=127.0.0.1:<port>` with a local `peer` server and
+  Chromium flags `--disable-features=WebRtcHideLocalIpsWithMdns
+  --allow-loopback-in-peer-connection` (see `scripts/smoke.mjs`).
+- Headless Chromium never hides a tab, so "background tab" is tested by
+  stopping the page's `requestAnimationFrame` loop instead.
 - `tsc` here is TypeScript 7 (native). `noUnusedLocals` is on: unused
   variables fail the typecheck.
 - Line endings: `.gitattributes` forces LF (except `*.cmd` = CRLF).

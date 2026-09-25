@@ -287,6 +287,18 @@ export class Lobby extends Screen {
     if (a === 'copy') this.act.copyCode(el.closest('[data-code]')!.getAttribute('data-code')!);
   }
 
+  /** Fresh room: forget the old chat. */
+  reset(): void {
+    this.chatLog.innerHTML = '';
+    this.sig = '';
+  }
+
+  /** Shown for the moment between connecting and the host's first reply. */
+  connecting(): void {
+    this.sig = '';
+    this.body.innerHTML = '<h2><span>Room</span></h2><div class="hint" style="padding:40px 0;text-align:center">Connecting to the room...</div>';
+  }
+
   render(room: RoomInfo, myId: number, offline: boolean): void {
     const sig = JSON.stringify([room, myId]);
     if (sig === this.sig) return;
