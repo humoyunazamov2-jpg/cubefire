@@ -14,6 +14,8 @@ export const CODE_LENGTH = 5;
 /** A link with no traffic at all for this long is treated as dropped. */
 const TIMEOUT_MS = 15000;
 const KEEPALIVE_MS = 2000;
+/** How long a closed room or link stays on the signalling server before leaving it. */
+const LINGER_MS = 2500;
 /** Frequent, replaceable messages go over the unordered channel. */
 const FAST = new Set(['snap', 'state']);
 
@@ -123,7 +125,10 @@ export class PeerLink<In, Out extends { t: string }> implements Link<In, Out> {
     if (this.closed) return;
     this.closed = true;
     this.keepalive.stop();
-    try { this.rel.close(); } catch { /* already closed */ }
+    // Deliver anything still queued (a kick reason, the last messages) before closing,
+    // but don't wait forever for a player who has already gone.
+    try { this.rel.close({ flush: true }); } catch { /* already closed */ }
+    setTimeout(() => { try { this.rel.close(); } catch { /* already closed */ } }, 1000);
     try { this.fast?.close(); } catch { /* already closed */ }
     for (const fn of this.closers) fn();
     this.closers = [];
@@ -187,6 +192,8 @@ export class RoomServer {
       if (conn.label === 'fast') {
         const link = this.links.get(cid);
         if (link) link.attachFast(conn); else this.pendingFast.set(cid, conn);
+        // A second channel whose main one never shows up (or already left) is dropped.
+        setTimeout(() => { if (this.pendingFast.get(cid) === conn) { this.pendingFast.delete(cid); conn.close(); } }, 15000);
         return;
       }
       const link: HostLink = new PeerLink(conn);
@@ -206,8 +213,12 @@ export class RoomServer {
     this.destroyed = true;
     for (const l of this.links.values()) l.close();
     this.links.clear();
-    this.peer?.destroy();
+    for (const c of this.pendingFast.values()) { try { c.close(); } catch { /* already closed */ } }
+    this.pendingFast.clear();
+    // Same as for friends: let closing channels finish before leaving the signalling server.
+    const peer = this.peer;
     this.peer = null;
+    if (peer) setTimeout(() => peer.destroy(), LINGER_MS);
   }
 }
 
@@ -235,9 +246,15 @@ export function joinRoom(code: string, onOpen: (link: ClientLink) => void, onFai
       settled = true;
       clearTimeout(timer);
       const link: ClientLink = new PeerLink(rel);
-      link.whenClosed(() => setTimeout(() => peer.destroy(), 200));
       const fast = peer.connect(target, { label: 'fast', reliable: false, serialization: 'json', metadata: { cid } });
       fast.on('open', () => link.attachFast(fast));
+      // Close the second channel even if it is still connecting, and only drop the
+      // signalling connection a little later: dropping it at once makes PeerJS on
+      // the host trip over a channel that is still arriving.
+      link.whenClosed(() => {
+        try { fast.close(); } catch { /* already closed */ }
+        setTimeout(() => peer.destroy(), LINGER_MS);
+      });
       onOpen(link);
     });
     rel.on('error', () => fail(explain('webrtc')));

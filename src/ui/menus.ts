@@ -1,5 +1,5 @@
 import './menus.css';
-import type { Prefs } from '../client/prefs';
+import { DEFAULT_PREFS, type Prefs } from '../client/prefs';
 import { MAPS, MAP_LIST } from '../maps';
 import type { C2H, RoomInfo, RoomSettings, TeamSlot } from '../net/protocol';
 import { esc } from './hud';
@@ -98,7 +98,7 @@ export class SettingsScreen extends Screen {
     super(parent, 'center dim');
   }
 
-  open(prefs: Prefs, onChange: (p: Prefs) => void, onClose: () => void): void {
+  open(prefs: Prefs, onChange: (p: Prefs) => void, onClose: () => void, gpu = ''): void {
     this.onClose = onClose;
     const p = { ...prefs };
     const seg = (key: keyof Prefs, opts: [string, string][]) =>
@@ -110,7 +110,7 @@ export class SettingsScreen extends Screen {
       crosshairSize: (v) => `${v}`, crosshairGap: (v) => `${v}`,
     };
     this.root.innerHTML = `<div class="panel">
-      <h2>Settings <button class="btn small" data-a="close">Done</button></h2>
+      <h2>Settings <span class="row"><button class="btn small" data-a="reset">Reset to defaults</button><button class="btn small" data-a="close">Done</button></span></h2>
       <div class="set-grid">
         <span>Mouse sensitivity</span>${range('sensitivity', 0.1, 4, 0.05, fmts.sensitivity)}
         <span>Field of view</span>${range('fov', 60, 100, 1, fmts.fov)}
@@ -122,7 +122,7 @@ export class SettingsScreen extends Screen {
         <span>Show FPS</span>${seg('showFps', [['true', 'On'], ['false', 'Off']])}<span></span>
         <span>Weapon bob</span>${seg('viewBob', [['true', 'On'], ['false', 'Off']])}<span></span>
       </div>
-      <h3>Graphics: Auto lowers the resolution when your frame rate drops. Low is for weak laptops.</h3>
+      <h3>Graphics: Auto lowers the resolution when your frame rate drops. Low is for weak laptops.${gpu ? `<br>Your graphics chip: ${esc(gpu)}` : ''}</h3>
     </div>`;
     const emit = () => onChange({ ...p });
     this.root.querySelectorAll<HTMLInputElement>('input[data-r]').forEach((inp) => {
@@ -152,6 +152,12 @@ export class SettingsScreen extends Screen {
       });
     });
     this.root.querySelector('[data-a="close"]')!.addEventListener('click', () => this.close());
+    this.root.querySelector('[data-a="reset"]')!.addEventListener('click', () => {
+      // Keep the player's name; everything else goes back to how it started.
+      const fresh = { ...DEFAULT_PREFS, name: p.name };
+      onChange(fresh);
+      this.open(fresh, onChange, onClose, gpu);
+    });
     this.show();
   }
 
@@ -179,6 +185,7 @@ export class HelpScreen extends Screen {
       <p><b>Money.</b> Everyone starts with $800 and a pistol. At the start of each round you have a few seconds to buy in your spawn area (press B). Winning a round pays $3250; losing pays $1400 and more for each loss in a row. Kills pay too: SMGs and shotguns pay the most. If you survive a round you keep your weapons.</p>
       <p><b>Shooting.</b> Stand still, walk or crouch to be accurate. Running and jumping make bullets spray. Headshots do four times the damage. Pull the mouse down while spraying to fight the recoil. Bullets go through thin wood, glass and leaves.</p>
       <p><b>Grenades.</b> Frag explodes after a short fuse. Blinder flashes anyone looking at it (turn away!). Fog makes a wall of smoke for 15 seconds.</p>
+      <p><b>Playing with friends.</b> One of you picks <i>Host a room</i> and gets a five-letter code. Press <i>Copy invite</i> and send the link, or just tell them the code: they pick <i>Join a room</i> and type it in. The host chooses the map and rules and presses Start. Empty places are filled with bots. The host's computer runs the match, so the host should keep the game open until the end (switching to another tab is fine).</p>
       <h3>Controls</h3>
       <div class="keys">${keys.map(([a, k]) => `<div><span>${a}</span><kbd>${k}</kbd></div>`).join('')}</div>
     </div>`;

@@ -26,7 +26,7 @@ work. Read it top to bottom before changing anything.
 | 5 | CS2 match rules and game UI | **Done** (tested end to end in headless Chromium; `npm run smoke`) |
 | 6 | Bots | **Done** (bot-only matches simulated on all maps; `npm run smoke`) |
 | 7 | Friends multiplayer (rooms over the internet) | **Done** (two browsers over real WebRTC in `npm run smoke`; needs one real test with a friend, see Part 7) |
-| 8 | Polish and release | **Next** |
+| 8 | Polish and release | **Done** except the deploy click, which is the owner's choice (see Part 8) |
 
 Git history has one commit per finished part (`git log --oneline`); Part 5
 has two (the in-progress commit and the finishing one).
@@ -41,15 +41,20 @@ has two (the in-progress commit and the finishing one).
 - **Team sizes 1v1 / 2v2 / 4v4, custom rooms only**, joined with a room code.
 - **Repository is PRIVATE** (owner's latest instruction). ⚠️ Conflict: earlier
   the owner chose "a permanent web link on GitHub Pages" for friends to join.
-  Free GitHub Pages only works for **public** repos. Before Part 8's deploy,
-  ask the owner to choose: make the repo public, pay for GitHub Pro, or use
-  another free static host (e.g. a separate public repo containing only the
-  built `dist/`, Cloudflare Pages, Netlify — the latter two need accounts the
-  owner must create themselves).
+  Free GitHub Pages only works for **public** repos. The owner said: don't
+  change visibility or create accounts, prepare everything and let them pick.
+  Done in Part 8: the Pages workflow is ready and skips publishing until Pages
+  is switched on; README.md "Putting the game online" gives the three options
+  (public repo, GitHub Pro, or upload `dist/` to Netlify/Cloudflare Pages)
+  click by click.
 - All art, sounds and names are **original** (generated in code). Never copy
   Minecraft textures/sounds or CS weapon/map names.
 
 ## How to run it (Windows, this machine)
+
+- **For the owner: double-click `start.cmd`.** It uses `.tools\node` if present
+  (otherwise an installed Node.js), runs `npm install` the first time, builds
+  the game and opens it at <http://127.0.0.1:5174/> with `vite preview`.
 
 - Node is a portable copy in `.tools/node` (gitignored, copied from the
   owner's other project `C:\Users\user\Projects\open-road\.tools`). Nothing is
@@ -190,9 +195,12 @@ Authority split (friends-only, so trust is fine):
 | `src/bots/nav.ts` | `NavGrid`: walkable nodes (one per column and floor height) linked by walk / jump / drop edges, reachability from spawns, A*, straight-walk test. Built once per map and cached |
 | `src/bots/bot.ts` | `Bot` (a `BotBrain`): per-round plan, pathing, perception, aiming and shooting, buying, grenades, reactions. Skill table `SKILLS` at the top |
 | `src/host/ticker.ts` | Web Worker-driven timer (60 Hz by default) so the host keeps simulating, and links keep their keepalives, in a background tab |
-| `src/maps/*` | `builder.ts` toolkit; maps `dunes`, `frostbite`, `arena`; `testMap.ts` is the old engine test scene and is no longer used (safe to delete) |
+| `src/maps/*` | `builder.ts` toolkit; maps `dunes`, `frostbite`, `arena` |
 | `src/main.ts` | Boots `App`, runs the frame loop, exposes the `__cf` test hook |
 | `scripts/smoke.mjs` | End-to-end smoke test in headless Chromium (`npm run smoke`) |
+| `start.cmd` | Windows launcher: install once, build, open the game (`vite preview`) |
+| `README.md` | Plain-English guide: play, friends, controls, putting the game online |
+| `.github/workflows/deploy.yml` | CI build on every push/PR; GitHub Pages publish once Pages is on |
 
 ### Gameplay numbers worth knowing
 
@@ -326,11 +334,47 @@ within a second.
 5. "Copy invite" to the clipboard (needs https, i.e. the deployed site).
 6. Firefox and Edge as well as Chrome.
 
-### Part 8 — Polish and release
-Settings screen (sensitivity, FOV, volume, crosshair, graphics quality with
-an automatic low mode for integrated GPUs), How-to-play, performance pass,
-one-click `start.cmd` launcher, plain-English README, and deployment (see the
-private-repo conflict above).
+### Part 8 — Polish and release (DONE, deploy step left to the owner)
+- **Settings** (from Part 5) plus **Reset to defaults** (keeps your name) and
+  a line naming the graphics chip. Graphics **Auto** now also picks a starting
+  resolution from the GPU name (`Renderer.suggestedScale`): built-in Intel-class
+  graphics start at 80%, software rendering at 60%, then Auto adjusts.
+- **How to play** has a "Playing with friends" section.
+- **Performance pass**: a 4v4 match is ~80–110 draw calls and 20–48k
+  triangles per frame, ~0.3 ms game update and ~1 ms render submission on the
+  CPU, so the integrated-GPU budget goes to pixels (hence Auto/Low scaling).
+  Found and fixed a leak: each match left ~120 scene objects, 11 geometries and
+  3 textures behind (effects pool, first-person gun, sky). `Effects.dispose`,
+  `ViewModel.dispose` and `Sky.dispose` now free them; repeated matches stay flat.
+- **Online fixes**: closing a link now flushes queued messages first, so a
+  "different game version" kick reason (and any last message) always arrives.
+  Peers now stay on the signalling server for 2.5 s after their links close
+  (`LINGER_MS`): leaving at once made PeerJS on the other side hit a null
+  connection (`_initializeDataChannel`) for a channel that was still arriving.
+- **No WebGL**: `main.ts` shows a plain explanation instead of a blank page.
+- **Closing the tab during an online game** asks first (`beforeunload`);
+  offline games don't.
+- `start.cmd` launcher (CRLF), plain-English `README.md`, version 1.0.0,
+  page description, `src/maps/testMap.ts` deleted.
+- **Deploy prepared**: `vite.config.ts` uses `base: './'`, so one build works
+  at any address (GitHub Pages' `/cubefire/`, a host's root, `vite preview`).
+  `.github/workflows/deploy.yml` typechecks and builds on every push and pull
+  request, and on `main` publishes to GitHub Pages only if Pages is switched on
+  (checked with the API; otherwise it adds a notice and succeeds).
+- The smoke test covers all of the above (32 checks), including the release
+  build served from `/cubefire/`.
+
+Decisions made while the owner was away:
+- **Hosting is left to the owner** (as asked): see README.md, "Putting the
+  game online". Nothing was made public and no accounts were created.
+- **`start.cmd` serves the release build** (`vite build` + `vite preview`)
+  rather than the dev server: it's what friends will get, and it loads faster.
+- **CI runs typecheck + build only**, not the smoke test: the smoke test needs
+  a browser download and ~3 minutes per run, which would eat into a private
+  repo's free Actions minutes. Run `npm run smoke` before merging instead.
+
+What the owner still needs to do: pick a hosting option and follow its steps
+in README.md; then do the real-friend test listed under Part 7.
 
 ## Known problems / notes
 
@@ -348,3 +392,6 @@ private-repo conflict above).
 - `tsc` here is TypeScript 7 (native). `noUnusedLocals` is on: unused
   variables fail the typecheck.
 - Line endings: `.gitattributes` forces LF (except `*.cmd` = CRLF).
+- Cloud sessions can't force-push. After a PR is squash-merged, bring `main`
+  back into the working branch with a normal merge (the content is identical),
+  then continue; squash-merge the next PR so `main` keeps one commit per part.

@@ -71,6 +71,21 @@ export class Effects {
     }
   }
 
+  /** Remove everything this created from the scene and free GPU memory. */
+  dispose(): void {
+    this.clear();
+    const owned: THREE.Mesh[] = [this.pMesh, ...this.decals, ...this.tracers.map((t) => t.mesh)];
+    const geos = new Set<THREE.BufferGeometry>([this.smokeGeo]), mats = new Set<THREE.Material>([this.smokeMat]);
+    for (const m of owned) {
+      this.scene.remove(m);
+      geos.add(m.geometry);
+      mats.add(m.material as THREE.Material);
+    }
+    this.pMesh.dispose();
+    for (const g of geos) g.dispose();
+    for (const m of mats) m.dispose();
+  }
+
   clear(): void {
     this.particles.length = 0;
     for (const d of this.decals) d.visible = false;

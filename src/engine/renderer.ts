@@ -71,7 +71,7 @@ export class Renderer {
       this.scene.remove(this.worldGroup);
       this.worldGroup.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
     }
-    if (this.sky) this.scene.remove(this.sky.group);
+    if (this.sky) { this.scene.remove(this.sky.group); this.sky.dispose(); }
 
     this.worldGroup = buildWorldMeshes(world, this.atlas, {
       sunDir: env.sunDir, sunColor: env.sunColor, skyColor: env.skyAmbient, sunStrength: env.sunStrength,
@@ -85,6 +85,24 @@ export class Renderer {
 
     this.sun.position.copy(env.sunDir).multiplyScalar(100);
     this.sun.color.copy(env.sunColor);
+  }
+
+  /** The graphics chip's name as the browser reports it (may be vague). */
+  gpuName(): string {
+    const gl = this.gl.getContext();
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    return String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER) ?? '');
+  }
+
+  /**
+   * A starting render scale for Auto graphics: built-in laptop graphics start a
+   * little lower, software rendering much lower. Auto adjusts from there.
+   */
+  suggestedScale(): number {
+    const name = this.gpuName();
+    if (/SwiftShader|llvmpipe|Software|Basic Render/i.test(name)) return 0.6;
+    if (/Intel|UHD|Iris|HD Graphics|Mali|Adreno|PowerVR/i.test(name)) return 0.8;
+    return 1;
   }
 
   get canvas(): HTMLCanvasElement {
