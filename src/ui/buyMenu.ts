@@ -1,3 +1,4 @@
+import { isTyping } from '../game/input';
 import { ARMOR, GRENADE_LIMIT, WEAPONS, type GrenadeId, type ItemId } from '../game/weapons';
 import type { Inventory } from '../net/protocol';
 import { esc } from './hud';
@@ -74,12 +75,16 @@ export class BuyMenu {
       const b = (e.target as HTMLElement).closest('button[data-item]') as HTMLButtonElement | null;
       if (b && !b.disabled) this.onBuy?.(b.dataset.item as ItemId);
     });
+    // Capture phase, so the game's own key handling never sees these keys
+    // (otherwise the B that closes the menu would open it again).
     addEventListener('keydown', (e) => {
-      if (!this.isOpen) return;
-      if (e.code === 'Escape' || e.code === 'KeyB') { e.preventDefault(); this.close(); return; }
+      if (!this.isOpen || isTyping(e.target)) return;
+      if (e.code === 'Escape' || e.code === 'KeyB') { e.preventDefault(); e.stopImmediatePropagation(); this.close(); return; }
       const item = KEY_OF[e.code];
-      if (item && this.ctx && !buyBlock(item, this.ctx) && this.ctx.canBuy) this.onBuy?.(item);
-    });
+      if (!item) return;
+      e.stopImmediatePropagation();
+      if (!e.repeat && this.ctx && !buyBlock(item, this.ctx) && this.ctx.canBuy) this.onBuy?.(item);
+    }, true);
   }
 
   get isOpen(): boolean {

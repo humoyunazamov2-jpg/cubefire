@@ -168,8 +168,8 @@ export class HelpScreen extends Screen {
   constructor(parent: HTMLElement, onClose: () => void) {
     super(parent, 'center dim');
     const keys: [string, string][] = [
-      ['Move', 'W A S D'], ['Jump', 'Space'], ['Crouch', 'Ctrl or C'], ['Walk quietly', 'Shift'],
-      ['Shoot', 'Left click'], ['Scope / heavy stab / lob', 'Right click'], ['Reload', 'R'], ['Weapons', '1 2 3 4 · wheel · Q'],
+      ['Move', 'W A S D'], ['Jump', 'Space · wheel down'], ['Crouch', 'Ctrl or C'], ['Walk quietly', 'Shift'],
+      ['Shoot', 'Left click'], ['Scope / heavy stab / lob', 'Right click'], ['Reload', 'R'], ['Weapons', '1 2 3 4 · Q'],
       ['Buy menu', 'B'], ['Scoreboard', 'Tab (hold)'], ['Drop weapon', 'G'], ['Inspect', 'F'],
       ['Chat / team chat', 'Y / U'], ['Pause', 'Esc'],
     ];
@@ -314,18 +314,20 @@ export class Lobby extends Screen {
       <div class="lobby-grid">
         ${team(0)}${team(1)}
         <div class="lobby-set">
-          <div><label>Mode</label>${segBtns('teamSize', [[1, '1v1'], [2, '2v2'], [4, '4v4']])}</div>
+          <div class="set-row"><label>Mode</label>${segBtns('teamSize', [[1, '1v1'], [2, '2v2'], [4, '4v4']])}</div>
           <div><label>Map</label><div class="map-cards">${MAP_LIST.map((id) => `<button class="map-card${s.map === id ? ' on' : ''}" ${isHost ? '' : 'disabled'} data-set="map=${id}">${MAPS[id].name}<small>${MAPS[id].sizes}</small></button>`).join('')}</div></div>
-          <div><label>Rounds to win</label>${segBtns('winRounds', [[3, '3'], [5, '5'], [7, '7'], [9, '9'], [13, '13']])}</div>
-          <div><label>Fill empty slots with bots</label>${segBtns('fillBots', [[true, 'Yes'], [false, 'No']])}</div>
-          <div><label>Bot skill</label>${segBtns('botSkill', [[0, 'Easy'], [1, 'Normal'], [2, 'Hard']])}</div>
-          <div><label>Friendly fire</label>${segBtns('friendlyFire', [[false, 'Off'], [true, 'On']])}</div>
+          <div class="set-row"><label>Rounds to win</label>${segBtns('winRounds', [[3, '3'], [5, '5'], [7, '7'], [9, '9'], [13, '13']])}</div>
+          <div class="set-row"><label>Fill empty slots with bots</label>${segBtns('fillBots', [[true, 'Yes'], [false, 'No']])}</div>
+          <div class="set-row"><label>Bot skill</label>${segBtns('botSkill', [[0, 'Easy'], [1, 'Normal'], [2, 'Hard']])}</div>
+          <div class="set-row"><label>Friendly fire</label>${segBtns('friendlyFire', [[false, 'Off'], [true, 'On']])}</div>
         </div>
       </div>
-      <div class="hint" style="margin-top:8px">${specs.length ? `Spectating: ${specs.map((r) => esc(r.name)).join(', ')} · ` : ''}${me?.team === -1 ? '<button class="btn small" data-join="0">Join a team</button>' : '<button class="btn small" data-join="-1">Spectate</button>'}</div>
       <div class="lobby-foot">
-        <button class="btn" data-a="leave">${offline ? 'Back' : isHost ? 'Close room' : 'Leave room'}</button>
-        <span class="hint">${isHost ? (offline ? '' : 'Send your friends the code. They pick "Join a room" and type it.') : 'Waiting for the host to start...'}</span>
+        <div class="row">
+          <button class="btn" data-a="leave">${offline ? 'Back' : isHost ? 'Close room' : 'Leave room'}</button>
+          ${me?.team === -1 ? '<button class="btn small" data-join="0">Join a team</button>' : '<button class="btn small" data-join="-1">Spectate</button>'}
+        </div>
+        <span class="hint grow">${specs.length ? `Spectating: ${specs.map((r) => esc(r.name)).join(', ')}. ` : ''}${isHost ? (offline ? '' : 'Send your friends the code. They pick "Join a room" and type it.') : 'Waiting for the host to start...'}</span>
         ${isHost ? '<button class="btn primary" data-a="start">Start match</button>' : ''}
       </div>`;
   }

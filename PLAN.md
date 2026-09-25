@@ -23,12 +23,13 @@ work. Read it top to bottom before changing anything.
 | 2 | Player movement and physics | **Done** |
 | 3 | Weapons and combat | **Done** |
 | 4 | Maps | **Done** |
-| 5 | CS2 match rules and game UI | **In progress** — code written and typechecks, **never run in a browser yet** (see "Where Part 5 stopped") |
-| 6 | Bots | Not started |
+| 5 | CS2 match rules and game UI | **Done** (tested end to end in headless Chromium; `npm run smoke`) |
+| 6 | Bots | **Next** |
 | 7 | Friends multiplayer (rooms over the internet) | Not started |
 | 8 | Polish and release | Not started |
 
-Git history has one commit per finished part (`git log --oneline`).
+Git history has one commit per finished part (`git log --oneline`); Part 5
+has two (the in-progress commit and the finishing one).
 
 ## Design decisions (made by the owner — don't change without asking)
 
@@ -67,7 +68,30 @@ Git history has one commit per finished part (`git log --oneline`).
   (main menu → lobby → match). The old `?map=` practice harness is gone; the
   menu's "Practice range" button replaces it (`app.practice(mapId)`).
 
-### Testing in Claude's browser pane
+## How to run it (Claude Code cloud sessions, Linux)
+
+Some sessions run in a cloud Linux container instead of the owner's laptop.
+There, Node 22, git and a global Playwright with Chromium are already on the
+PATH; GitHub access is through the session's own tools (no `gh`).
+```bash
+npm install
+npx tsc --noEmit                      # typecheck
+npm run smoke                         # end-to-end test, ~1 min (see below)
+node node_modules/vite/bin/vite.js --port 5174 --strictPort --host 127.0.0.1   # dev server
+```
+
+### Automated smoke test (`npm run smoke`)
+
+`scripts/smoke.mjs` starts its own Vite server, opens the game in headless
+Chromium (SwiftShader WebGL) and checks: main menu → lobby (settings change) →
+match start → buy phase → round win and payout → halftime swap and $800 reset
+→ match end 3:1 with scoreboard → back to lobby → main menu → practice range
+(free buys, armour) → menu, plus "no console errors". Exit code 0 = all passed.
+Run it after every change. It needs Playwright (global in cloud sessions; on
+the Windows laptop it is not installed — `npm i -g playwright` there first).
+Extend it when Parts 6–8 add features.
+
+### Testing in Claude's browser pane / headless Chromium
 
 The pane's tab is usually hidden, so `requestAnimationFrame` is paused.
 `main.ts` exposes `window.__cf = { app, run }`:
@@ -82,6 +106,14 @@ The pane's tab is usually hidden, so `requestAnimationFrame` is paused.
 - Mouse buttons: `app.input.held.add('Mouse0'); app.input.pressedNow.add('Mouse0')`
   (TS-private fields, reachable from page JS).
 - Screenshots work after `run()` has rendered a frame.
+- Fast-forwarding without rendering (much quicker in SwiftShader): call
+  `host.update(1/60)`, `client.update(1/60)`, `app.input.endFrame()` in a loop,
+  yielding with `await new Promise(r => setTimeout(r, 0))` every ~20 steps so
+  the in-memory link's messages get delivered (see `T.fast` in the smoke test).
+- Headless Chromium grants pointer lock on a real `page.mouse.click`, but
+  pressing Escape does **not** release it there; call `document.exitPointerLock()`.
+- In SwiftShader the real frame rate is low, so Auto graphics shrinks the
+  canvas; a screenshot taken right after a resize can be black. Not a bug.
 
 ## Architecture
 
@@ -136,6 +168,7 @@ Authority split (friends-only, so trust is fine):
 | `src/host/ticker.ts` | Web Worker-driven 60 Hz tick so the host keeps simulating in a background tab |
 | `src/maps/*` | `builder.ts` toolkit; maps `dunes`, `frostbite`, `arena`; `testMap.ts` is the old engine test scene and is no longer used (safe to delete) |
 | `src/main.ts` | Boots `App`, runs the frame loop, exposes the `__cf` test hook |
+| `scripts/smoke.mjs` | End-to-end smoke test in headless Chromium (`npm run smoke`) |
 
 ### Gameplay numbers worth knowing
 
@@ -147,42 +180,38 @@ Authority split (friends-only, so trust is fine):
 
 ## What each remaining part must do
 
-### Part 5 — CS2 match rules and game UI (IN PROGRESS)
-The host round state machine already exists in `host.ts` (warmup → freeze →
-live → roundEnd → halftime → matchEnd, economy, MVP, buy zones).
+### Part 5 — CS2 match rules and game UI (DONE)
+Round state machine in `host.ts` (warmup → freeze → live → roundEnd →
+halftime → matchEnd, economy, MVP, buy zones) plus the app shell and all
+menus. Everything in the old "next steps" list was run in headless Chromium
+and works: main menu with Dunes backdrop, Play vs bots → lobby → loading →
+"Click to play" → HUD; a whole match (round wins, time-up draw and
+"more health" wins, loss bonus, kill rewards, halftime swap, match end
+scoreboard, back to lobby); Esc → pause, Resume re-locks, B buy menu without
+the pause menu, chat keeps the lock; settings apply live from the menu and
+the pause menu; practice range; joining Frost, spectating and picking a team
+mid-match from the pause menu; "End match for everyone".
 
-#### Where Part 5 stopped (owner asked to stop here)
-Written, typechecks (`npx tsc --noEmit` exit 0), committed — but **not yet run
-in a browser even once**. Expect small bugs on first run.
-- Done: `src/app.ts` app shell; `src/ui/menus.ts` + `menus.css` (main menu with
-  name box, Play vs bots, Practice range, Settings, How to play; lobby with
-  team lists, add/remove bots, mode 1v1/2v2/4v4, map cards, rounds to win,
-  fill bots, bot skill, friendly fire, start button, lobby chat; pause menu;
-  settings screen saved to localStorage; loading/notice screens);
-  `src/host/ticker.ts` background ticker (used for every hosted session);
-  `GameClient` got `onLoading` / `onChat` hooks and loads the map one tick
-  after `start` so the loading screen can paint; `main.ts` now boots `App`.
-- The main menu's online buttons are hidden (`new App(root)` → `online=false`);
-  `hostOnline()` / `joinOnline()` just show "Coming soon" (Part 7).
-- Bots use the idle placeholder `makeBot` in `app.ts` (they stand and look
-  around) until Part 6.
-
-#### Next steps for Part 5, in order
-1. Start the dev server, open the page, check the console for errors, and
-   screenshot the main menu (the backdrop is Dunes with an orbiting camera).
-2. Play vs bots → lobby renders → Start match → loading screen → "Click to play"
-   prompt → HUD. With `manualTick`, confirm freeze → live → kill all bots via
-   `host.applyDamage` or shooting → roundEnd → money paid → next round.
-3. Run a whole match (e.g. winRounds 3): halftime swaps spawns and resets money
-   to $800, matchEnd shows the scoreboard, then the host sends `end` and the
-   app returns to the lobby. Then Leave → main menu → backdrop comes back.
-4. Pointer lock: Esc → pause menu; Resume re-locks; B opens the buy menu
-   without triggering the pause menu; chat (Y) keeps the lock.
-5. Settings apply live (FOV, sensitivity, volume, crosshair, graphics).
-6. Practice range from the menu still works (sandbox, free buys, respawn).
-7. Update this file, commit, push.
-- Known rough edge: the first-person tracer start point uses the view-model
-  camera (different FOV), so tracers start slightly off. Cosmetic.
+Bugs found and fixed on the first run:
+- B closed the buy menu and the same key press reopened it (buy menu now
+  handles its keys in the capture phase and stops them).
+- Armour was never sent in the inventory (host keeps it on the player), so the
+  HUD blinked to 0 after buying and the buy menu never showed kevlar as owned
+  or the $350 helmet upgrade. Buy menu now uses live armour from snapshots.
+- Scoreboard columns didn't line up between the teams (enemy money is blank);
+  ADR divided by one round too few at round/match end.
+- Kill feed carried over between rounds; now cleared each round.
+- The client remembered the last phase across matches, so a new match could
+  skip its "Round 1" banner.
+- Removing a bot mid-round (a spectator taking its seat) never re-checked
+  elimination or dropped its gun.
+- Shrinking the team size in the lobby left "2/1" teams; extra bots are removed
+  (and extra humans moved) right away.
+- Lobby didn't fit a 720p screen (chat box cut off); settings are now compact rows.
+- The "Click to play" prompt could cover the pause menu.
+- Own tracers started ~90 px away from the gun on screen (view model uses its
+  own camera/FOV); now mapped through screen space and start at the muzzle.
+- How-to-play said the wheel switches weapons; by default it jumps.
 
 ### Part 6 — Bots
 Implement `BotBrain` (`host.ts` exports the interface; `host.botFactory`).
@@ -217,6 +246,9 @@ private-repo conflict above).
 ## Known problems / notes
 
 - Browser pane tab is hidden during automated tests → use `__cf.run()`.
+- The lobby chat is shown in "Play vs bots" too (only join notes appear there
+  until Part 7).
+- A spectator who picks a team mid-match gets that round's win/loss money.
 - `tsc` here is TypeScript 7 (native). `noUnusedLocals` is on: unused
   variables fail the typecheck.
 - Line endings: `.gitattributes` forces LF (except `*.cmd` = CRLF).

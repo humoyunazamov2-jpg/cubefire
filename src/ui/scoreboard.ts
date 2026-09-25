@@ -12,6 +12,9 @@ export interface ScoreRow {
   stats: PlayerStats | undefined;
 }
 
+/** Same fixed column widths for both teams so their columns line up. */
+const COLS = `<colgroup><col><col style="width:78px">${'<col style="width:44px">'.repeat(3)}<col style="width:52px"><col style="width:52px"><col style="width:64px"><col style="width:52px"></colgroup>`;
+
 /** Hold Tab: both teams with kills, deaths, assists, damage per round and more. */
 export class Scoreboard {
   readonly root: HTMLDivElement;
@@ -32,11 +35,12 @@ export class Scoreboard {
     this.root.classList.toggle('on', v);
   }
 
-  render(rows: ScoreRow[], score: [number, number], round: number, mapName: string, myId: number): void {
-    const sig = JSON.stringify([rows, score, round, myId]);
+  /** `played` is the number of finished rounds, for damage per round. */
+  render(rows: ScoreRow[], score: [number, number], round: number, played: number, mapName: string, myId: number): void {
+    const sig = JSON.stringify([rows, score, round, played, myId]);
     if (sig === this.sig) return;
     this.sig = sig;
-    const rounds = Math.max(1, round - 1);
+    const rounds = Math.max(1, played);
     const table = (team: number) => {
       const list = rows.filter((r) => r.team === team)
         .sort((a, b) => (b.stats?.kills ?? 0) - (a.stats?.kills ?? 0) || (b.stats?.damage ?? 0) - (a.stats?.damage ?? 0));
@@ -51,7 +55,7 @@ export class Scoreboard {
       }).join('');
       const name = team === 0 ? 'Blaze' : 'Frost';
       return `<div class="sb-team ${team === 0 ? 'blaze' : 'frost'}"><h3><span>${name}</span><span>${score[team]}</span></h3>` +
-        `<table><tr><th>Player</th><th>Money</th><th>K</th><th>D</th><th>A</th><th>ADR</th><th>HS</th><th>MVP</th><th>Ping</th></tr>${body}</table></div>`;
+        `<table>${COLS}<tr><th>Player</th><th>Money</th><th>K</th><th>D</th><th>A</th><th>ADR</th><th>HS</th><th>MVP</th><th>Ping</th></tr>${body}</table></div>`;
     };
     const specs = rows.filter((r) => r.team === -1).map((r) => esc(r.name)).join(', ');
     this.box.innerHTML = `<h2><span>${esc(mapName)}</span><span>Round ${Math.max(1, round)}</span></h2>${table(0)}${table(1)}` +

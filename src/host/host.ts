@@ -8,7 +8,7 @@ import { inBox, type BuiltMap, type SpawnPoint } from '../maps/types';
 import type { Link } from '../net/link';
 import {
   DEFAULT_SETTINGS, PROTOCOL_VERSION,
-  type C2H, type DroppedItem, type H2C, type HitReport, type MatchState, type Phase,
+  type C2H, type DroppedItem, type H2C, type HitReport, type Inventory, type MatchState, type Phase,
   type RoomInfo, type RoomSettings, type TeamSlot, type V3,
 } from '../net/protocol';
 import { HostPlayer } from './hostPlayer';
@@ -148,11 +148,34 @@ export class HostSession {
   removePlayer(id: number): void {
     const p = this.players.get(id);
     if (!p) return;
+    if (p.alive && this.inMatch) this.dropOnDeath(p);
     this.players.delete(id);
     this.bots.delete(id);
     this.links.get(id)?.close();
     this.links.delete(id);
     this.broadcastRoom();
+    if (this.inMatch) this.checkElimination();
+  }
+
+  /** After the team size shrinks: drop extra bots, then move extra humans elsewhere. */
+  private fitTeams(): void {
+    const size = this.settings.teamSize;
+    const members = (t: number) => [...this.players.values()].filter((p) => p.team === t);
+    for (const t of [0, 1] as const) {
+      let list = members(t);
+      for (const bot of list.filter((p) => p.bot).reverse()) {
+        if (list.length <= size) break;
+        this.removePlayer(bot.id);
+        list = list.filter((p) => p !== bot);
+      }
+      // Newest humans move first; the host keeps their seat.
+      for (const p of list.filter((q) => !q.isHost).reverse()) {
+        if (list.length <= size) break;
+        const other = (1 - t) as 0 | 1;
+        p.team = members(other).length < size ? other : -1;
+        list = list.filter((q) => q !== p);
+      }
+    }
   }
 
   /** Top up both teams with bots (or remove extra bots) to match the team size. */
@@ -248,6 +271,7 @@ export class HostSession {
       case 'settings':
         if (!isHost || this.inMatch) return;
         this.settings = { ...this.settings, ...msg.settings };
+        this.fitTeams();
         this.broadcastRoom();
         return;
       case 'startMatch':
@@ -274,7 +298,7 @@ export class HostSession {
   private sendFullState(p: HostPlayer): void {
     this.send(p.id, { t: 'match', m: this.matchState() });
     this.send(p.id, { t: 'items', items: [...this.items.values()].map(stripItem) });
-    this.send(p.id, { t: 'inv', inv: p.inv, money: p.money, reset: true });
+    this.send(p.id, { t: 'inv', inv: invOf(p), money: p.money, reset: true });
     this.send(p.id, { t: 'stats', stats: [...this.players.values()].map((q) => q.stats) });
     if (p.alive) this.send(p.id, { t: 'spawn', p: p.p, yaw: p.yaw });
   }
@@ -553,7 +577,7 @@ export class HostSession {
   }
 
   private sendInv(p: HostPlayer, give?: { w: WeaponId; ammo: [number, number] }, reset = false): void {
-    this.send(p.id, { t: 'inv', inv: structuredClone(p.inv), money: p.money, give, reset });
+    this.send(p.id, { t: 'inv', inv: invOf(p), money: p.money, give, reset });
   }
 
   // ------------------------------------------------------------- match flow
@@ -828,6 +852,11 @@ export class HostSession {
     const sig = [...this.players.values()].map((p) => p.ping).join(',');
     if (sig !== this.lastPingSig) { this.lastPingSig = sig; this.broadcastRoom(); }
   }
+}
+
+/** A player's inventory as sent to them; armour lives on the player itself. */
+function invOf(p: HostPlayer): Inventory {
+  return { ...structuredClone(p.inv), armor: p.armor, helmet: p.helmet };
 }
 
 function stripItem(i: DroppedItem): DroppedItem {

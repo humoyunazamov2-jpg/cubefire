@@ -21,7 +21,7 @@ import { TEAM_COLORS, gunGeometry } from '../render/playerModel';
 import { Effects } from '../render/effects';
 import { ViewModel } from '../render/viewModel';
 import { voxMaterial } from '../render/voxelModel';
-import type { BuyMenu } from '../ui/buyMenu';
+import type { BuyContext, BuyMenu } from '../ui/buyMenu';
 import type { Hud } from '../ui/hud';
 import type { Scoreboard } from '../ui/scoreboard';
 import type { Prefs } from './prefs';
@@ -275,6 +275,7 @@ export class GameClient {
     this.me = null;
     this.alive = false;
     this.match = null;
+    this.lastPhase = '';
     this.stats.clear();
     this.ui.buy.close();
   }
@@ -344,6 +345,7 @@ export class GameClient {
     const mine = this.myTeam;
     switch (m.phase) {
       case 'freeze':
+        hud.clearFeed();
         hud.message(`Round ${m.round}`, m.round === 1 ? 'Buy weapons with B, then fight!' : 'Buy phase', '', 3);
         break;
       case 'live':
@@ -591,9 +593,7 @@ export class GameClient {
     const targets = this.targets();
     const ends: V3[] = [];
     const hits: HitReport[] = [];
-    const muzzle = this.view.muzzleWorld(new THREE.Vector3());
-    // Muzzle position from the view model lives in view space; map it to the world.
-    const camMuzzle = muzzle.applyMatrix4(this.renderer.viewCamera.matrixWorldInverse).applyMatrix4(this.renderer.camera.matrixWorld);
+    const camMuzzle = this.muzzleInWorld(new THREE.Vector3());
     let headHit = false, anyHit = false;
     for (let i = 0; i < def.pellets; i++) {
       const cone = def.pellets > 1 ? def.spreadStand + (spread - def.spreadStand) : spread;
@@ -616,6 +616,22 @@ export class GameClient {
     const [up, side] = a.recoil();
     me.punchPitch += up;
     me.punchYaw += side;
+  }
+
+  /**
+   * The world point that lines up on screen with the gun's muzzle. The gun
+   * is drawn by its own camera with a different field of view, so map it
+   * through screen space rather than copying its position.
+   */
+  private muzzleInWorld(out: THREE.Vector3): THREE.Vector3 {
+    const vc = this.renderer.viewCamera, cam = this.renderer.camera;
+    this.view.muzzleWorld(out);
+    const dist = out.distanceTo(vc.getWorldPosition(this.tmpV));
+    out.project(vc);
+    out.z = 0.5;
+    out.unproject(cam);
+    const eye = cam.getWorldPosition(this.tmpV);
+    return out.sub(eye).normalize().multiplyScalar(dist).add(eye);
   }
 
   private melee(heavy: boolean): void {
@@ -690,7 +706,7 @@ export class GameClient {
     this.ui.scores.visible = input.rawDown('Tab') && !menuOpen;
     if (this.ui.buy.isOpen) {
       if (!this.canBuyHere()) this.ui.buy.close();
-      else this.ui.buy.update({ money: this.money, inv: this.arsenal.inv, canBuy: true, buyLeft: this.buyLeft(), sandbox: this.sandbox });
+      else this.ui.buy.update(this.buyContext());
     }
 
     // Movement and aiming.
@@ -749,7 +765,13 @@ export class GameClient {
 
   private openBuy(): void {
     this.onWantCursor?.(true);
-    this.ui.buy.open({ money: this.money, inv: this.arsenal.inv, canBuy: true, buyLeft: this.buyLeft(), sandbox: this.sandbox });
+    this.ui.buy.open(this.buyContext());
+  }
+
+  /** Armour comes from snapshots too, so it is current even after taking damage. */
+  private buyContext(): BuyContext {
+    const inv = { ...this.arsenal.inv, armor: this.armor, helmet: this.helmet };
+    return { money: this.money, inv, canBuy: true, buyLeft: this.buyLeft(), sandbox: this.sandbox };
   }
 
   private surfaceUnder(x: number, y: number, z: number) {
@@ -929,7 +951,9 @@ export class GameClient {
           stats: this.stats.get(e.id),
         };
       });
-      this.ui.scores.render(rows, m?.score ?? [0, 0], m?.round ?? 1, this.map ? MAPS[this.mapId!].name : '', this.myId);
+      const over = m?.phase === 'roundEnd' || m?.phase === 'halftime' || m?.phase === 'matchEnd';
+      const played = m ? (over ? m.round : m.round - 1) : 0;
+      this.ui.scores.render(rows, m?.score ?? [0, 0], m?.round ?? 1, played, this.map ? MAPS[this.mapId!].name : '', this.myId);
     }
   }
 

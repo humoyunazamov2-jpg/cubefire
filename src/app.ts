@@ -100,7 +100,7 @@ export class App {
     this.notice = new Notice(root);
 
     document.addEventListener('pointerlockchange', () => this.onLockChange());
-    document.addEventListener('pointerlockerror', () => { if (this.state === 'match') this.prompt.show(); });
+    document.addEventListener('pointerlockerror', () => { if (this.state === 'match' && !this.pause.visible) this.prompt.show(); });
     addEventListener('keydown', (e) => {
       if (e.code === 'Escape' && this.settings.visible) this.settings.close();
     });
@@ -164,6 +164,7 @@ export class App {
     const s = this.session;
     if (!s) return;
     const me = s.client.room?.roster.find((r) => r.id === s.client.myId);
+    this.prompt.hide();
     this.pause.open({ canPickTeam: me?.team === -1, isHost: !!s.host && !s.practice, code: s.code, online: !s.offline });
   }
 
