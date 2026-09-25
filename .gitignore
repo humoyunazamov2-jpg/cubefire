@@ -1,0 +1,20 @@
+# Dependencies (restore with npm install)
+node_modules/
+
+# Portable Node runtime (~95 MB, machine-local)
+.tools/
+
+# Build output
+dist/
+
+# Environment / secrets
+.env
+.env.*
+
+# Machine-specific Claude Code config
+.claude/
+
+# Logs and OS files
+*.log
+.DS_Store
+Thumbs.db
