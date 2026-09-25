@@ -146,8 +146,8 @@
 .buy-item:hover:not(:disabled) { border-color: var(--gold); background: rgba(255, 209, 102, 0.08); }
 .buy-item:disabled { opacity: 0.4; cursor: not-allowed; }
 .buy-item.owned { border-color: var(--good); }
-.buy-item .row { display: flex; justify-content: space-between; font-size: 14px; }
-.buy-item .price { color: var(--good); }
+.buy-item .row { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.buy-item .price { color: var(--good); white-space: nowrap; }
 .buy-item .blurb { font-size: 10px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
 .buy-item kbd { font: inherit; color: var(--gold); margin-right: 6px; }
 .buy footer { margin-top: 10px; font-size: 11px; color: var(--muted); }
@@ -158,7 +158,8 @@
 .sb-team h3 { margin: 0; padding: 6px 8px; font-weight: 400; font-size: 14px; display: flex; justify-content: space-between; }
 .sb-team.blaze h3 { background: var(--blaze-dark); }
 .sb-team.frost h3 { background: var(--frost-dark); }
-.sb-team table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sb-team table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+.sb-team td:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-team th { color: var(--muted); font-weight: 400; font-size: 10px; text-align: right; padding: 4px 8px; }
 .sb-team th:first-child, .sb-team td:first-child { text-align: left; }
 .sb-team td { padding: 5px 8px; text-align: right; border-top: 1px solid var(--line); }
