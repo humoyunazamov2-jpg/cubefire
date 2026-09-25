@@ -8,7 +8,7 @@ import { Input } from './game/input';
 import { HostSession, type BotBrain } from './host/host';
 import type { HostPlayer } from './host/hostPlayer';
 import { localPair } from './net/link';
-import type { C2H, H2C } from './net/protocol';
+import type { C2H, H2C, MapId } from './net/protocol';
 import { BuyMenu } from './ui/buyMenu';
 import { Hud } from './ui/hud';
 import { Scoreboard } from './ui/scoreboard';
@@ -21,7 +21,9 @@ const hud = new Hud(app);
 const ui = { hud, buy: new BuyMenu(app), scores: new Scoreboard(app) };
 const prefs = loadPrefs();
 
-const host = new HostSession('TEST', { map: 'dunes', teamSize: 4, fillBots: false });
+const params = new URLSearchParams(location.search);
+const mapId = (params.get('map') ?? 'dunes') as MapId;
+const host = new HostSession('TEST', { map: mapId, teamSize: 4, fillBots: false });
 host.sandbox = true;
 // Dummy bots strafe back and forth so there is something to shoot at.
 host.botFactory = (_h, p: HostPlayer): BotBrain => {
@@ -31,11 +33,10 @@ host.botFactory = (_h, p: HostPlayer): BotBrain => {
     onRoundStart() { base.x = p.p[0]; base.z = p.p[2]; },
     update(dt) {
       t += dt;
-      const off = Math.sin(t * 0.9) * 2.5;
-      p.p = [base.x + off, p.p[1], base.z];
-      p.v = [Math.cos(t * 0.9) * 2.25, 0, 0];
-      p.yaw = Math.PI;
-      p.crouch = Math.sin(t * 0.3) > 0.7 ? 1 : 0;
+      const off = Math.sin(t * 0.9) * 1.5;
+      p.p = [base.x, p.p[1], base.z + off];
+      p.v = [0, 0, Math.cos(t * 0.9) * 1.35];
+      p.yaw = Math.PI / 2;
     },
   };
 };
@@ -49,17 +50,8 @@ client.onWantCursor = (free) => (free ? input.releaseLock() : input.requestLock(
 setTimeout(() => {
   host.addBot(1); host.addBot(1); host.addBot(1);
   host.startMatch();
-  // Put the dummies in a row across the courtyard.
-  const spots: [number, number, number][] = [[14.5, 5, 14.5], [20.5, 5, 13.5], [26.5, 5, 15.5]];
-  [...host.players.values()].filter((p) => p.bot).forEach((p, i) => {
-    p.alive = true; p.hp = 100; p.p = [...spots[i]]; p.team = 1;
-    host.bots.get(p.id)?.onRoundStart?.();
-  });
-  const me = [...host.players.values()].find((p) => !p.bot)!;
-  me.team = 0;
-  host.spawnPlayer(me, true);
+  for (const p of host.players.values()) { if (!p.bot) p.team = 0; host.spawnPlayer(p, true); }
 }, 50);
-
 const overlay = document.createElement('div');
 overlay.style.cssText = 'position:fixed;inset:0;display:flex;flex-direction:column;gap:12px;align-items:center;justify-content:center;background:rgba(0,0,0,.45);font-size:28px;cursor:pointer;z-index:10';
 overlay.innerHTML = 'Click to play<small style="font-size:12px;opacity:.7">B buy · 1-4 weapons · R reload · right-click scope/heavy · G drop · Tab scores</small>';
