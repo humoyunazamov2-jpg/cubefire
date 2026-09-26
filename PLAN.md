@@ -39,14 +39,11 @@ has two (the in-progress commit and the finishing one).
 - **Fixed maps.** No breaking or placing blocks.
 - **No Web3.** Money and stats are per-match only.
 - **Team sizes 1v1 / 2v2 / 4v4, custom rooms only**, joined with a room code.
-- **Repository is PRIVATE** (owner's latest instruction). ⚠️ Conflict: earlier
-  the owner chose "a permanent web link on GitHub Pages" for friends to join.
-  Free GitHub Pages only works for **public** repos. The owner said: don't
-  change visibility or create accounts, prepare everything and let them pick.
-  Done in Part 8: the Pages workflow is ready and skips publishing until Pages
-  is switched on; README.md "Putting the game online" gives the three options
-  (public repo, GitHub Pro, or upload `dist/` to Netlify/Cloudflare Pages)
-  click by click.
+- **Repository is PUBLIC, game on GitHub Pages** (owner's decision after Part
+  8): permanent link <https://humoyunazamov2-jpg.github.io/cubefire/>.
+  `.github/workflows/deploy.yml` republishes on every push to `main`. Claude's
+  tools can't change repository settings, so the owner flipped visibility and
+  set Settings → Pages → Source to "GitHub Actions" themselves.
 - All art, sounds and names are **original** (generated in code). Never copy
   Minecraft textures/sounds or CS weapon/map names.
 
