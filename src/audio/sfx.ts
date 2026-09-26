@@ -50,6 +50,11 @@ export class Sfx {
     if (this.ctx) this.master.gain.value = v;
   }
 
+  /** The audio context, once sound has been unlocked (null before). */
+  get context(): AudioContext | null {
+    return this.ctx;
+  }
+
   /** Keep the listener on the camera. */
   setListener(cam: THREE.Camera): void {
     if (!this.ctx) return;

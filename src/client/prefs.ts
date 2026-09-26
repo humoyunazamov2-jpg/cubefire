@@ -5,6 +5,8 @@ export interface Prefs {
   sensitivity: number;
   fov: number;
   volume: number;
+  /** Background music, 0 = off. */
+  musicVolume: number;
   crosshairColor: string;
   crosshairSize: number;
   crosshairGap: number;
@@ -22,6 +24,7 @@ export const DEFAULT_PREFS: Prefs = {
   sensitivity: 1,
   fov: 80,
   volume: 0.7,
+  musicVolume: 0.5,
   crosshairColor: '#7cff6b',
   crosshairSize: 7,
   crosshairGap: 4,

@@ -186,6 +186,7 @@ Authority split (friends-only, so trust is fine):
 | `src/client/prefs.ts` | Player settings in localStorage |
 | `src/render/*` | Player models + skins, first-person view model, voxel gun models, effects (tracers, particles, bullet holes, smoke, explosions) |
 | `src/audio/sfx.ts` | Procedural WebAudio sounds (gunshots, footsteps per surface, explosions…) |
+| `src/audio/music.ts` | Procedural background music: step-sequenced synth songs ("Sandstone Drift" for menus, "Countdown" for the buy phase), crossfades, `renderTrack` for offline tests |
 | `src/ui/hud.ts`, `buyMenu.ts`, `scoreboard.ts` | HUD, buy menu, scoreboard (DOM overlays) |
 | `src/ui/menus.ts`, `menus.css` | Main menu, settings, how-to-play, pause menu, lobby, click-to-play prompt, loading and notice screens |
 | `src/app.ts` | `App`: owns renderer/input/UI, switches menu ↔ lobby ↔ match, starts sessions (`playVsBots`, `practice`), pointer-lock/pause handling, menu backdrop, auto graphics quality. Sets `host.botFactory = createBot` |
@@ -372,6 +373,25 @@ Decisions made while the owner was away:
 
 What the owner still needs to do: pick a hosting option and follow its steps
 in README.md; then do the real-friend test listed under Part 7.
+
+### After release: background music (owner's request)
+- Two original themes synthesised in code (pad, bass, echoing lead, drums):
+  **Sandstone Drift** (A minor, 96 BPM, 16-bar loop; the lead comes in on
+  the second pass) in the main menu and lobby, and **Countdown** (E minor,
+  124 BPM, 4-bar loop with a snare roll) during each round's buy phase.
+- `App.updateMusic()` picks the track every frame; `Music` crossfades
+  (0.6 s) or fades to silence (1.4 s). Sound starts after the first click or
+  key press anywhere (browser rule; `sfx.unlock()` on pointerdown/keydown).
+- Settings → **Music** (0–100%, 0 shows "Off"), multiplied by **Volume**.
+  Default 50%.
+- Decisions: "shop phase" = the **BUY PHASE** on the round clock (freeze
+  time), so the music fades out on "Go!", even though buying is still allowed
+  for the first seconds of the round: the fight needs footsteps and gunshots
+  to be audible. No music in the practice range (it has no rounds), at round
+  end, halftime or match end.
+- Smoke test: menu music after a click, Music 0% = off, buy-phase music stops
+  when the round goes live, and both themes rendered offline are audible and
+  never clip (35 checks).
 
 ## Known problems / notes
 
