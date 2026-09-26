@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { Music, type Track } from './audio/music';
 import { sfx } from './audio/sfx';
 import { GameClient } from './client/client';
 import { loadPrefs, savePrefs, type Prefs } from './client/prefs';
@@ -38,6 +39,7 @@ export class App {
   readonly hud: Hud;
   readonly buy: BuyMenu;
   readonly scores: Scoreboard;
+  readonly music = new Music(() => sfx.context);
   prefs: Prefs;
   state: State = 'menu';
   session: Session | null = null;
@@ -100,6 +102,8 @@ export class App {
     this.notice = new Notice(root);
 
     document.addEventListener('pointerlockchange', () => this.onLockChange());
+    // Browsers only allow sound after the player clicks or presses a key.
+    for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, () => sfx.unlock(), true);
     // Closing the tab during an online game drops you (or, for the host, everyone).
     addEventListener('beforeunload', (e) => {
       const s = this.session;
@@ -161,6 +165,7 @@ export class App {
   private applyPrefs(): void {
     this.session?.client.applyPrefs(this.prefs);
     sfx.setVolume(this.prefs.volume);
+    this.music.setVolume(this.prefs.musicVolume, this.prefs.volume);
     this.renderer.setFov(this.prefs.fov);
     if (this.prefs.quality === 'high') this.setScale(1);
     if (this.prefs.quality === 'low') this.setScale(0.6);
@@ -383,6 +388,19 @@ export class App {
     }
     this.input.endFrame();
     this.autoQuality(dt);
+    this.updateMusic();
+  }
+
+  /**
+   * Menu theme in the menus and lobby; the buy-phase theme while a round's
+   * buy phase lasts; silence once the round is live (and in the practice range).
+   */
+  private updateMusic(): void {
+    const s = this.session;
+    let track: Track | null = null;
+    if (this.state === 'menu' || this.state === 'lobby') track = 'menu';
+    else if (s && !s.practice && s.client.match?.phase === 'freeze') track = 'buy';
+    this.music.want(track);
   }
 
   /** In Auto mode, render fewer pixels while the frame rate is low. */

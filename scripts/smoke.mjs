@@ -77,6 +77,31 @@ try {
   await page.click('text=Done');
   check('settings apply at once and reset to defaults', fovSet === 95 && reset.fov === 80 && reset.cam === 80 && reset.name === 'Tester', JSON.stringify(reset));
 
+  // Music: the menu theme starts after the first click; the Music slider at 0% turns it off.
+  const track = () => page.evaluate(() => window.__cf.app.music.current);
+  const menuTrack = await page.waitForFunction(() => window.__cf.app.music.current === 'menu', null, { timeout: 5000 }).then(() => 'menu', () => 'none');
+  await page.click('text=Settings');
+  const setMusic = (v) => page.$eval('input[data-r="musicVolume"]', (el, v) => { el.value = String(v); el.dispatchEvent(new Event('input')); }, v);
+  await setMusic(0);
+  await page.waitForTimeout(200);
+  const off = { track: await track(), label: await page.textContent('[data-v="musicVolume"]') };
+  await setMusic(0.5);
+  const back = await page.waitForFunction(() => window.__cf.app.music.current === 'menu', null, { timeout: 5000 }).then(() => 'menu', () => 'none');
+  await page.click('text=Done');
+  check('menu music plays, and Music 0% switches it off', menuTrack === 'menu' && off.track === null && off.label === 'Off' && back === 'menu', JSON.stringify({ menuTrack, off, back }));
+  const levels = await page.evaluate(async () => {
+    const { renderTrack } = await import('/src/audio/music.ts');
+    const out = {};
+    for (const [t, secs] of [['menu', 20], ['buy', 8]]) {
+      const d = await renderTrack(t, secs);
+      let peak = 0, sum = 0;
+      for (const x of d) { peak = Math.max(peak, Math.abs(x)); sum += x * x; }
+      out[t] = { peak: +peak.toFixed(2), rms: +Math.sqrt(sum / d.length).toFixed(3) };
+    }
+    return out;
+  });
+  check('both music themes are audible and never clip', Object.values(levels).every((l) => l.peak < 0.95 && l.rms > 0.03), JSON.stringify(levels));
+
   // Lobby
   await page.evaluate(() => { window.__cf.app.manualTick = true; });
   await page.click('text=Play vs bots');
@@ -90,10 +115,13 @@ try {
   await page.waitForFunction(() => window.__cf.app.state === 'match', null, { timeout: 5000 });
   await page.evaluate(() => window.T.fast(0.5));
   check('match starts in buy phase with bots filled', await page.evaluate(() => window.T.host().phase === 'freeze' && window.T.host().players.size === 4));
+  const buyMusic = await page.waitForFunction(() => window.__cf.app.music.current === 'buy', null, { timeout: 5000 }).then(() => 'buy', () => 'none');
 
   // Round 1: Blaze wins
   await page.evaluate(() => window.T.fast(10.2));
   check('buy phase ends, round goes live', await page.evaluate(() => window.T.host().phase === 'live'));
+  const liveMusic = await page.waitForFunction(() => window.__cf.app.music.current === null, null, { timeout: 5000 }).then(() => 'silent', () => 'still playing');
+  check('buy-phase music plays, then stops when the round goes live', buyMusic === 'buy' && liveMusic === 'silent', `${buyMusic} -> ${liveMusic}`);
   await page.evaluate(() => { window.T.wipe(1); return window.T.fast(0.3); });
   const r1 = await page.evaluate(() => ({ phase: window.T.host().phase, score: window.T.host().score, money: window.T.me().money }));
   check('eliminating a team ends the round and pays out', r1.phase === 'roundEnd' && r1.score[0] === 1 && r1.money === 800 + 2 * 300 + 3250, JSON.stringify(r1));

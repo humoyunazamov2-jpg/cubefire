@@ -63,6 +63,9 @@ More in the game under **How to play**.
 
 ## If the game feels slow
 
+**Music** plays in the menus and during each round's buy phase, and stops
+when the fighting starts. Turn it down (or to Off) in **Settings → Music**.
+
 Open **Settings** and set **Graphics** to **Low**. The default, **Auto**,
 lowers the resolution by itself when the frame rate drops, and starts a little
 lower on laptops with built-in graphics. **Show FPS** puts a frame counter in

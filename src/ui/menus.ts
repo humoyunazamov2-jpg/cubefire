@@ -107,6 +107,7 @@ export class SettingsScreen extends Screen {
       `<input type="range" data-r="${key}" min="${min}" max="${max}" step="${step}" value="${p[key]}"><span class="val" data-v="${key}">${fmt(p[key] as number)}</span>`;
     const fmts: Record<string, (v: number) => string> = {
       sensitivity: (v) => v.toFixed(2), fov: (v) => `${v}°`, volume: (v) => `${Math.round(v * 100)}%`,
+      musicVolume: (v) => (v > 0 ? `${Math.round(v * 100)}%` : 'Off'),
       crosshairSize: (v) => `${v}`, crosshairGap: (v) => `${v}`,
     };
     this.root.innerHTML = `<div class="panel">
@@ -115,6 +116,7 @@ export class SettingsScreen extends Screen {
         <span>Mouse sensitivity</span>${range('sensitivity', 0.1, 4, 0.05, fmts.sensitivity)}
         <span>Field of view</span>${range('fov', 60, 100, 1, fmts.fov)}
         <span>Volume</span>${range('volume', 0, 1, 0.05, fmts.volume)}
+        <span>Music</span>${range('musicVolume', 0, 1, 0.05, fmts.musicVolume)}
         <span>Crosshair size</span>${range('crosshairSize', 2, 14, 1, fmts.crosshairSize)}
         <span>Crosshair gap</span>${range('crosshairGap', 0, 12, 1, fmts.crosshairGap)}
         <span>Crosshair colour</span><div class="row">${CROSSHAIR_COLORS.map((c) => `<span class="swatch${p.crosshairColor === c ? ' on' : ''}" data-c="${c}" style="background:${c}"></span>`).join('')}</div><span></span>
