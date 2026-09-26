@@ -8,6 +8,9 @@ of rounds wins. Play against bots, or open a private room and play with friends.
 Everything you see and hear (blocks, weapons, players, sounds) is made by the
 game's own code, so there are no image or sound files to download.
 
+**Play now: <https://humoyunazamov2-jpg.github.io/cubefire/>** (works in
+Chrome, Edge or Firefox; send friends the same link to play together).
+
 ## Play on this computer (Windows)
 
 1. Double-click **`start.cmd`** in this folder.
@@ -68,7 +71,9 @@ the corner. If the game says it **can't start**, follow the steps it shows
 
 ## Putting the game online
 
-Everything is prepared; the only choice left is where the game lives. Pick one.
+This repository uses option A: it is public and GitHub Pages publishes the game
+at the link above every time `main` changes. The other options are kept here in
+case that ever needs to change.
 
 **A. Free, with GitHub Pages (the repository becomes public, so anyone can see
 the code).**
